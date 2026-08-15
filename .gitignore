@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Extraction artifacts. Raw responses and generated JSON are reproducible;
+# the sample order image may contain real customer data.
+out/
+samples/*
+!samples/.gitkeep

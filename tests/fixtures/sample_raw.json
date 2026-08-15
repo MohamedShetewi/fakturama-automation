@@ -1,0 +1,78 @@
+{
+  "order_date": "2026-03-01",
+  "external_reference": "PO-2026-0042",
+  "currency": "EUR",
+  "locale_evidence": "Euro symbol in the totals block and DD.MM.YYYY dates in the header",
+  "debtor": {
+    "company": "Beispiel Handels GmbH",
+    "first_name": "Anna",
+    "last_name": "Schmidt",
+    "salutation": null,
+    "alias": "BEISPIEL",
+    "printed_customer_id": "CUST-1007",
+    "billing_address": {
+      "street": "Musterstrasse 12",
+      "zip": "10115",
+      "city": "Berlin",
+      "country": "DE",
+      "email": "ap@beispiel-handels.de",
+      "phone": "+49 30 1234567",
+      "additional_name": null,
+      "address_specification": null,
+      "district": null
+    },
+    "delivery_address": {
+      "street": "Lagerweg 4",
+      "zip": "12683",
+      "city": "Berlin",
+      "country": "DE",
+      "email": null,
+      "phone": null,
+      "additional_name": "Wareneingang",
+      "address_specification": null,
+      "district": null
+    }
+  },
+  "payment": {
+    "method": "Bank Transfer",
+    "paid_status": "PAID",
+    "payment_date": "2026-03-04"
+  },
+  "items": [
+    {
+      "position": 1,
+      "sku": "SKU-1001",
+      "description": "Widget, stainless steel",
+      "quantity": 3,
+      "unit_net_price": 19.99,
+      "vat_percent": 19,
+      "discount_percent": null,
+      "source_total": 59.97
+    },
+    {
+      "position": 2,
+      "sku": "SKU-2002",
+      "description": "Assembly service, per unit",
+      "quantity": 1,
+      "unit_net_price": 250.00,
+      "vat_percent": 7,
+      "discount_percent": null,
+      "source_total": 250.00
+    },
+    {
+      "position": 3,
+      "sku": "SKU-3003",
+      "description": "Mounting bracket",
+      "quantity": 10,
+      "unit_net_price": 4.95,
+      "vat_percent": 19,
+      "discount_percent": 10,
+      "source_total": 44.55
+    }
+  ],
+  "totals": {
+    "net_total": 354.52,
+    "vat_total": 37.35,
+    "gross_total": 391.87
+  }
+}
