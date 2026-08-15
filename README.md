@@ -42,10 +42,22 @@ one-cent failures on exactly the sums being checked.
 git clone <repo> && cd fakturama-automation
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:OPENAI_API_KEY = "<key>"
+copy .env.example .env      # then put your key in it
 ```
 
 Requires Python 3.11+ (uses `X | None` syntax).
+
+### The API key
+
+`.env` at the repo root holds `OPENAI_API_KEY`; it is gitignored, and
+`.env.example` is the tracked template. It's read by `extraction/env.py` — no
+`python-dotenv` dependency, since the format we need is `KEY=VALUE`.
+
+The real environment wins over the file, so CI and a one-off
+`$env:OPENAI_API_KEY = "<key>"` still override without editing anything. The file
+is only read on the path that actually calls the API — `--from-raw` and the tests
+need no key. A missing key exits `3` and says so, rather than surfacing as a 401
+from inside the SDK.
 
 ## Run
 
@@ -87,13 +99,14 @@ $env:EXTRACT_MODEL = "gpt-5.6-terra"   # stronger read on poor scans
 ```
 extraction/
   config.py     tunables: model, tolerance, rounding policy
+  env.py        loads the gitignored .env (API key), environment wins
   schema.py     Pydantic models -> the strict JSON Schema + the output contract
   extract.py    the vision call, with schema-validation retry
   reconcile.py  the gate: pure arithmetic, no I/O
   derive.py     deterministic values the automation needs
   output.py     serialization
   cli.py        orchestration and exit codes
-tests/          64 tests, no API key required
+tests/          72 tests, no API key required
 ```
 
 ## Design notes

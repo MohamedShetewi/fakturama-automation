@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from decimal import Decimal
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import config, output
+from . import config, env, output
 from .derive import derive
 from .extract import ExtractionError, ExtractionResult, extract
 from .reconcile import reconcile
@@ -82,6 +83,17 @@ def main(argv: list[str] | None = None) -> int:
             result = _load_raw(args.from_raw)
             print(f"reconciling saved response: {args.from_raw}")
         else:
+            # Only on the path that actually calls the API: --from-raw needs no
+            # key, and reading the file there would be a side effect for nothing.
+            env.load()
+            if not os.environ.get("OPENAI_API_KEY"):
+                print(
+                    "EXTRACTION FAILED: no OPENAI_API_KEY. Copy .env.example to "
+                    f"{env.ENV_FILE.name} and put your key in it, or set the "
+                    "environment variable.",
+                    file=sys.stderr,
+                )
+                return config.EXIT_EXTRACTION_FAILED
             print(f"extracting {image} with {args.model or config.model()} ...")
             result = extract(image, model=args.model)
             raw_path.parent.mkdir(parents=True, exist_ok=True)

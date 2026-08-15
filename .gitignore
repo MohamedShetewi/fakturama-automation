@@ -3,6 +3,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Local secrets. The API key lives here; .env.example is the tracked template.
+.env
+.env.*
+!.env.example
+
 # Extraction artifacts. Raw responses and generated JSON are reproducible;
 # the sample order image may contain real customer data.
 out/

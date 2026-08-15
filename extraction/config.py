@@ -28,7 +28,7 @@ IMAGE_DETAIL = "high"
 
 # One retry, so a single malformed response doesn't fail the run but a
 # systematically bad prompt doesn't silently burn budget either.
-MAX_EXTRACTION_ATTEMPTS = 2
+MAX_EXTRACTION_ATTEMPTS = 1
 
 # --- money -------------------------------------------------------------------
 
