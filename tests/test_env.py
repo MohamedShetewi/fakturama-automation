@@ -57,3 +57,14 @@ def test_bom_does_not_become_part_of_the_key(tmp_path, monkeypatch):
 
 def test_missing_file_is_not_an_error(tmp_path):
     assert env.load(tmp_path / "nope.env") == []
+
+
+def test_unfilled_template_values_count_as_missing():
+    # The .env.example placeholder, and the shapes people leave behind.
+    for value in (None, "", "   ", "sk-...", "sk-", "<your key here>"):
+        assert env.is_placeholder(value), f"{value!r} should read as unset"
+
+
+def test_a_real_looking_key_is_not_a_placeholder():
+    assert not env.is_placeholder("sk-proj-AbC123def456")
+    assert not env.is_placeholder("  sk-proj-AbC123def456  ")

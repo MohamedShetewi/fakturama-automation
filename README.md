@@ -61,17 +61,47 @@ from inside the SDK.
 
 ## Run
 
+The one command. Extracts `samples\invoice.png` and writes the validated JSON:
+
 ```powershell
-# extract an image
-.\.venv\Scripts\python.exe -m extraction.cli samples\order.png -o out\order.json
+.\.venv\Scripts\python.exe -m extraction.cli samples\invoice.png -o out\invoice.json
+```
 
-# re-run the gate on a saved response, no API call
-.\.venv\Scripts\python.exe -m extraction.cli samples\order.png `
-    --from-raw tests\fixtures\sample_raw.json -o out\order.json
+Expected output on a document that reconciles:
 
-# tests (no API key needed)
+```
+extracting samples\invoice.png with gpt-5.6-luna ...
+  read ok (attempt 1, <in> in / <out> out tokens) -> out\invoice.raw.json
+  reconciled: net 570.00, VAT 108.30, gross 678.30 (tolerance +/-0.01)
+  wrote out\invoice.json
+```
+
+The three totals are the ones `samples\invoice.png` actually prints, and are
+verified — the gate has been run against that document via `--from-raw`. The
+token counts vary per run.
+
+Two files land in `out\`: `invoice.raw.json` is the model's unmodified response,
+written *before* validation so a bad read can still be inspected;
+`invoice.json` is the contract with the UIA half.
+
+### The other three
+
+```powershell
+# no API call: re-run the gate on a saved response. Use to re-check a fixture,
+# or to confirm the gate catches a value you have deliberately corrupted.
+.\.venv\Scripts\python.exe -m extraction.cli samples\invoice.png `
+    --from-raw tests\fixtures\sample_raw.json -o out\invoice.json
+
+# stronger model for one run, without editing anything
+.\.venv\Scripts\python.exe -m extraction.cli samples\invoice.png `
+    --model gpt-5.6-terra -o out\invoice.json
+
+# tests. No API key, no network, no image.
 .\.venv\Scripts\python.exe -m pytest
 ```
+
+`--from-raw` takes the *image path too*, but only to label `meta.source_image`;
+the file is never opened on that path, so it needs neither a key nor a real image.
 
 Exit codes — the interface for anything wrapping this:
 
@@ -149,9 +179,13 @@ miss — which is what §2.6's "leave Salutation as `---` when none is supplied"
 
 - **Part 1 design doc** — separate deliverable.
 - **UIA automation**, spec 1.3–5.7 — consumes `out/order.json`.
-- **No end-to-end run against a real order image yet.** No sample image was supplied;
-  everything is verified against `tests/fixtures/sample_raw.json`. The gate and the
-  derivations are proven; the *prompt* is not until it meets a real scan.
+- **No end-to-end run against a real order image yet.** `samples\invoice.png` is now
+  supplied, and the gate has been run against that document's real values by hand —
+  it reconciles (570.00 / 108.30 / 678.30), and a deliberately corrupted line total
+  is caught and halts at exit `2`. But that transcription was made by hand, not by
+  the model. The gate and the derivations are proven; the *prompt* is not, and will
+  not be until the run above executes with a real key and its output is diffed
+  against a known-correct read.
 - No OCR cross-check. The spec allows "OCR and/or an LLM"; reconciliation is the safety
   net instead. Worth adding if real scans prove noisy on dense number columns.
 - Single image per run; no batching.

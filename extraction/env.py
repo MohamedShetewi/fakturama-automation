@@ -18,6 +18,7 @@ from pathlib import Path
 from . import config
 
 ENV_FILE = config.REPO_ROOT / ".env"
+EXAMPLE_FILE = config.REPO_ROOT / ".env.example"
 
 
 def parse(text: str) -> dict[str, str]:
@@ -41,6 +42,24 @@ def parse(text: str) -> dict[str, str]:
             value = value[1:-1]
         values[key] = value
     return values
+
+
+def is_placeholder(value: str | None) -> bool:
+    """True if this is the template's stand-in rather than a real key.
+
+    Copying .env.example and forgetting to edit it is the obvious first
+    mistake, and without this check it surfaces as a 401 from inside the SDK
+    that echoes the placeholder back - which reads like a key problem rather
+    than a "you did not fill in the file" problem.
+    """
+    if value is None:
+        return True
+    stripped = value.strip()
+    if not stripped:
+        return True
+    # The example file ships "sk-...". Strip the trailing dots and hyphen and
+    # nothing but the prefix is left. A <bracketed> value is a template too.
+    return stripped.rstrip(".-") in ("sk", "") or stripped.startswith("<")
 
 
 def load(path: Path | None = None, *, override: bool = False) -> list[str]:

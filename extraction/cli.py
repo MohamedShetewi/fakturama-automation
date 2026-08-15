@@ -86,11 +86,12 @@ def main(argv: list[str] | None = None) -> int:
             # Only on the path that actually calls the API: --from-raw needs no
             # key, and reading the file there would be a side effect for nothing.
             env.load()
-            if not os.environ.get("OPENAI_API_KEY"):
+            if env.is_placeholder(os.environ.get("OPENAI_API_KEY")):
                 print(
-                    "EXTRACTION FAILED: no OPENAI_API_KEY. Copy .env.example to "
-                    f"{env.ENV_FILE.name} and put your key in it, or set the "
-                    "environment variable.",
+                    "EXTRACTION FAILED: no usable OPENAI_API_KEY. Copy "
+                    f"{env.EXAMPLE_FILE.name} to {env.ENV_FILE.name} and replace "
+                    "the placeholder with your real key, or set the environment "
+                    "variable.",
                     file=sys.stderr,
                 )
                 return config.EXIT_EXTRACTION_FAILED
