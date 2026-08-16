@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 
@@ -40,6 +41,26 @@ class UIError(RuntimeError):
 # --- tree walking ------------------------------------------------------------
 
 
+def _children(ctrl) -> list:
+    """A control's children, or none if it disappeared while we asked.
+
+    Enumerating a disposed element does not return empty - it raises, out of
+    the COM layer:
+
+        _ctypes.COMError: An event was unable to invoke any of the subscribers
+
+    which used to abort the entire tree walk. That matters because the walks
+    happen exactly when the tree is unstable: right after a dialog closes,
+    while SWT is disposing its children. A branch that evaporates mid-walk is
+    a normal event here, not a failure of the search.
+    """
+    try:
+        return ctrl.GetChildren()
+    except Exception as exc:
+        log.debug("a control vanished while walking into it (%s)", exc)
+        return []
+
+
 def find_all(root, pred, max_depth: int = 14) -> list:
     """Every descendant satisfying `pred`. uiautomation has no find-all."""
     out = []
@@ -47,7 +68,7 @@ def find_all(root, pred, max_depth: int = 14) -> list:
     def walk(ctrl, depth=0):
         if depth > max_depth:
             return
-        for child in ctrl.GetChildren():
+        for child in _children(ctrl):
             try:
                 if pred(child):
                     out.append(child)
@@ -79,11 +100,37 @@ def find_one(root, pred, what: str, max_depth: int = 14):
 # --- the application ---------------------------------------------------------
 
 
+def _process_ids(image: str = "Fakturama.exe") -> list[str]:
+    """The pids of a named process, or [] if none and [] if we cannot tell."""
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH", "/FO", "CSV"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception:
+        return []
+    return [line.split(",")[1].strip('" ') for line in out.splitlines()
+            if line.startswith(f'"{image}"')]
+
+
 def window():
     win = auto.WindowControl(searchDepth=1, RegexName=config.WINDOW_RE)
-    if not win.Exists(config.FIND_TIMEOUT):
-        raise UIError("Fakturama window not found - is the application running?")
-    return win
+    if win.Exists(config.FIND_TIMEOUT):
+        return win
+
+    # Distinguish "not started" from "started and hung". Fakturama has been
+    # seen surviving a crash as a process with no window at all, which holds
+    # the workspace lock and makes a fresh instance fail too - so "is it
+    # running?" is exactly the wrong question to send someone away with.
+    pids = _process_ids()
+    if pids:
+        raise UIError(
+            f"Fakturama is running (pid {', '.join(pids)}) but has no window. "
+            "It has most likely crashed; end that process and start it again "
+            "before re-running - a windowless instance still holds the "
+            "workspace lock."
+        )
+    raise UIError("Fakturama window not found - is the application running?")
 
 
 def activate(win) -> None:

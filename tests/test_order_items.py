@@ -10,8 +10,10 @@ from decimal import Decimal
 
 import pytest
 
+import automation.order_items as mod
 from automation.order_items import (
-    Item, discount_as_percent, find, index_of, read, same_value, to_item, vat_name,
+    Item, discount_as_percent, find, index_of, open_cell, read, same_value,
+    to_item, vat_name,
 )
 
 VAT_19 = ("VAT taxValue: [0.19] salesEqualizationTax: [null] description: [null] "
@@ -132,6 +134,150 @@ class TestIndexOf:
 
     def test_absent_sku_is_none(self):
         assert index_of([JUICE], "CHR-ERG-01") is None
+
+
+class Rect:
+    left, top, right, bottom = 100, 200, 1400, 500
+
+    def width(self):
+        return self.right - self.left
+
+    def height(self):
+        return self.bottom - self.top
+
+
+class FakeBox:
+    """A stand-in for the Text control SWT opens over a cell being edited."""
+
+    ControlTypeName = "EditControl"
+
+    def __init__(self, value):
+        self.value = value
+        self.BoundingRectangle = Rect()
+
+
+@pytest.fixture
+def grid(monkeypatch):
+    """open_cell with the UI replaced by a keystroke recorder.
+
+    Records what was sent and hands back whichever cell editor the test says
+    is open, so the navigation can be checked without Fakturama.
+    """
+
+    class Grid:
+        def __init__(self):
+            self.keys = []
+            self.clicks = []
+            self.boxes = []          # what _cell_editors reports, after F2
+            self.opened = []         # what it reports before F2
+
+        def press(self, keys, waitTime=0):
+            self.keys.append(keys)
+            if keys == "{Esc}":
+                self.opened = []
+
+        def click(self, x, y):
+            self.clicks.append((x, y))
+
+        @property
+        def downs(self):
+            return self.keys.count("{Down}")
+
+        @property
+        def rights(self):
+            return self.keys.count("{Right}")
+
+    g = Grid()
+
+    class FakePane:
+        BoundingRectangle = Rect()
+
+    monkeypatch.setattr(mod.ui, "items_grid", lambda editor: FakePane())
+    monkeypatch.setattr(mod.ui, "focus_is_inside", lambda ctrl: True)
+    monkeypatch.setattr(mod.ui, "legacy_value", lambda box: box.value)
+    monkeypatch.setattr(mod.auto, "SendKeys", g.press)
+    monkeypatch.setattr(mod.auto, "Click", g.click)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    def editors(editor, rect):
+        return g.boxes if "{F2}" in g.keys else g.opened
+
+    monkeypatch.setattr(mod, "_cell_editors", editors)
+    return g
+
+
+class TestOpenCell:
+    """Reaching a row without trusting a row height.
+
+    The regression: row 0 opened fine and row 1 reported "could not open that
+    cell". GRID_ROW_HEIGHT was measured on a different grid, so every row past
+    the first was aimed at by arithmetic that had never been checked here.
+    """
+
+    def test_a_later_row_is_reached_with_arrow_keys(self, grid):
+        grid.boxes = [FakeBox("1.00")]
+        box, why = open_cell(object(), 3, "quantity", "1.00")
+        assert why == "" and box is not None
+        assert grid.downs == 3
+
+    def test_the_first_row_needs_no_arrows_at_all(self, grid):
+        grid.boxes = [FakeBox("1.00")]
+        open_cell(object(), 0, "quantity", "1.00")
+        assert grid.downs == 0
+
+    def test_every_row_is_clicked_at_the_same_place(self, grid):
+        # The point of the change: the click no longer encodes which row.
+        seen = set()
+        for row in (0, 1, 5, 30):
+            grid.keys.clear()
+            grid.clicks.clear()
+            grid.boxes = [FakeBox("1.00")]
+            open_cell(object(), row, "quantity", "1.00")
+            seen.update(grid.clicks)
+        assert len(seen) == 1
+
+    def test_the_column_is_reached_with_arrow_keys_too(self, grid):
+        grid.boxes = [FakeBox("USD 40")]
+        open_cell(object(), 1, "unit_price", "USD 40")
+        assert grid.rights == 6          # ITEM_COL['unit_price']
+
+    def test_a_cell_holding_something_else_is_not_typed_into(self, grid):
+        # Landing on the SKU column while aiming at the quantity would book a
+        # different product, and nothing downstream would notice.
+        grid.boxes = [FakeBox("MAT-DESK-02")]
+        box, why = open_cell(object(), 1, "quantity", "1.00")
+        assert box is None
+        assert "MAT-DESK-02" in why and "1.00" in why
+        assert grid.keys[-1] == "{Esc}"          # cancelled, not left open
+
+    def test_a_cell_that_never_opened_says_so(self, grid):
+        grid.boxes = []
+        box, why = open_cell(object(), 1, "quantity", "1.00")
+        assert box is None
+        assert "0 cell editors are open" in why
+
+    def test_a_leftover_editor_is_closed_before_starting(self, grid):
+        # Enter does not dispose the editor synchronously; for a moment the
+        # grid reports two, and the next cell was unidentifiable.
+        grid.opened = [FakeBox("stale")]
+        grid.boxes = [FakeBox("1.00")]
+        box, why = open_cell(object(), 1, "quantity", "1.00")
+        assert why == "" and box is not None
+        assert grid.keys[0] == "{Esc}"
+
+    def test_an_editor_that_refuses_to_close_stops_the_write(self, grid, monkeypatch):
+        monkeypatch.setattr(mod, "_cell_editors", lambda e, r: [FakeBox("stuck")])
+        box, why = open_cell(object(), 1, "quantity", "1.00")
+        assert box is None
+        assert "still" in why and "open" in why
+        assert grid.clicks == []          # never even reached for
+
+    def test_a_grid_that_does_not_take_focus_stops_the_write(self, grid, monkeypatch):
+        monkeypatch.setattr(mod.ui, "focus_is_inside", lambda ctrl: False)
+        grid.boxes = [FakeBox("1.00")]
+        box, why = open_cell(object(), 1, "quantity", "1.00")
+        assert box is None
+        assert "did not take the keyboard" in why
 
 
 class TestRead:

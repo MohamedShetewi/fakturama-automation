@@ -124,14 +124,19 @@ def index_of(rows: list[list[str]], sku: str) -> int | None:
 # --- writing -----------------------------------------------------------------
 
 
-def _inline_editor(editor, grid_rect):
-    """The cell editor currently open inside the grid, if any.
+def _cell_editors(editor, grid_rect) -> list:
+    """Every cell editor currently open inside the grid.
 
     A NatTable cell is painted, not published - until it is being edited, at
     which point SWT creates a real Text over it. That control is the write
     target, so the coordinate only has to be good enough to *open* the editor;
     the value goes in through a published control and is read back from it,
     exactly like every other field.
+
+    Returned as a list rather than "the one", because more than one is a state
+    that actually happens and the two cases need different handling: none means
+    the cell never opened, several means an earlier edit has not been disposed
+    yet and there is no way to tell which box the keystrokes would reach.
     """
     inside = []
     for c in ui.find_all(editor, lambda c: c.ControlTypeName == "EditControl", 14):
@@ -139,9 +144,31 @@ def _inline_editor(editor, grid_rect):
         if (grid_rect.left <= b.left and b.right <= grid_rect.right
                 and grid_rect.top <= b.top and b.bottom <= grid_rect.bottom):
             inside.append(c)
-    if len(inside) != 1:
-        return None
-    return inside[0]
+    return inside
+
+
+def _inline_editor(editor, grid_rect):
+    """The one cell editor open inside the grid, or None if that is unclear."""
+    open_boxes = _cell_editors(editor, grid_rect)
+    return open_boxes[0] if len(open_boxes) == 1 else None
+
+
+def _close_open_editors(editor, grid_rect, tries: int = 6) -> int:
+    """Escape until the grid holds no open cell editor. Returns how many remain.
+
+    Committing with Enter does not dispose the editor synchronously - SWT
+    reuses and hides it, and for a short window afterwards the grid reports two
+    Text controls. Starting the next cell in that state is what turns a working
+    write into "no cell editor opened": the count is not one, so the box cannot
+    be identified, and the step gives up on a grid that was about to be fine.
+    """
+    for _ in range(tries):
+        left = _cell_editors(editor, grid_rect)
+        if not left:
+            return 0
+        auto.SendKeys("{Esc}", waitTime=0.1)
+        time.sleep(config.SETTLE / 2)
+    return len(_cell_editors(editor, grid_rect))
 
 
 def same_value(got: str, expect: str) -> bool:
@@ -158,54 +185,71 @@ def same_value(got: str, expect: str) -> bool:
     return (got or "").strip() == (expect or "").strip()
 
 
-def open_cell(editor, row: int, column: str, expect: str):
+def open_cell(editor, row: int, column: str, expect: str) -> tuple[object | None, str]:
     """Open one cell for editing, and prove it is the cell that was asked for.
 
-    Rows can only be reached by coordinate - they are painted, and a row's y is
-    the one measurement there is no alternative to. Columns are *not*: the
-    click lands on the first data column only to give the grid an active cell,
-    and every column after that is reached with arrow keys, so a re-sized table
-    cannot shift the target sideways.
+    Only the *first* row's y is measured. Every row after it is reached with
+    {Down}, and every column with {Right}, for the same reason in both
+    directions: a fixed row height is a guess about a table that re-lays itself
+    out. GRID_ROW_HEIGHT was measured on the address grid, and a row that is a
+    pixel or two taller here puts row 3's click on row 2 - which the identity
+    check below catches, but only as a flat refusal to write. Arrow keys also
+    carry the viewport with them, so an order long enough to scroll still
+    works; a computed y for row 20 is simply off the bottom of the pane.
 
     `expect` is what the copied row says the cell already holds. If the opened
-    editor disagrees, the navigation landed somewhere else and this returns
-    None rather than typing into whatever it found - writing a quantity into
-    the SKU column raises nothing at all, it just books a different product.
+    editor disagrees, the navigation landed somewhere else and this refuses
+    rather than typing into whatever it found - writing a quantity into the SKU
+    column raises nothing at all, it just books a different product.
+
+    Returns the editor control and an empty reason, or None and why not. The
+    reason is carried out rather than only logged: "could not open that cell"
+    covers four different faults, and a run that stops has to say which.
     """
     # items_grid, not grid_pane: the generic "smallest pane" heuristic picks
     # the Remarks box on a tall order, and a cell editor opened there would
     # take the typed quantity into the wrong widget entirely.
     grid = ui.items_grid(editor)
     r = grid.BoundingRectangle
-    auto.SendKeys("{Esc}", waitTime=0.1)
-    y = r.top + config.GRID_FIRST_ROW_DY + row * config.GRID_ROW_HEIGHT
-    auto.Click(r.left + config.GRID_FIRST_COLUMN_DX, y)
+
+    # Start from a grid with nothing open. An editor left over from the
+    # previous cell makes the one below unidentifiable.
+    stale = _close_open_editors(editor, r)
+    if stale:
+        return None, (f"{stale} cell editor(s) from an earlier edit are still "
+                      "open and would not close; refusing to type into a grid "
+                      "whose keystrokes could land in either")
+
+    auto.Click(r.left + config.GRID_FIRST_COLUMN_DX,
+               r.top + config.GRID_FIRST_ROW_DY)
     time.sleep(config.SETTLE)
     if not ui.focus_is_inside(editor):
-        log.warning("row %d did not take focus", row)
-        return None
+        return None, "the Items grid did not take the keyboard when clicked"
 
     # That click also opens the first column's editor. Close it, so the arrow
     # keys move the *selection* instead of the caret inside a text box.
-    auto.SendKeys("{Esc}", waitTime=0.1)
+    _close_open_editors(editor, r)
+    for _ in range(row):
+        auto.SendKeys("{Down}", waitTime=0.08)
     for _ in range(config.ITEM_COL[column]):
         auto.SendKeys("{Right}", waitTime=0.08)
     time.sleep(config.SETTLE)
     auto.SendKeys("{F2}", waitTime=0.15)
     time.sleep(config.SETTLE)
 
-    box = _inline_editor(editor, r)
-    if box is None:
-        log.warning("no cell editor opened on row %d, column %r", row, column)
-        return None
+    open_boxes = _cell_editors(editor, r)
+    if len(open_boxes) != 1:
+        return None, (f"{len(open_boxes)} cell editors are open on row {row}, "
+                      f"column {column!r}; expected exactly one")
+    box = open_boxes[0]
     got = (ui.legacy_value(box) or "").strip()
     if not same_value(got, expect):
         # Landed on the wrong cell. Cancel rather than overwrite it.
-        log.warning("row %d column %r shows %r, expected %r - not editing",
-                    row, column, got, expect)
         auto.SendKeys("{Esc}", waitTime=0.1)
-        return None
-    return box
+        return None, (f"the cell that opened holds {got!r}, but row {row}'s "
+                      f"{column} was copied as {expect!r} - the navigation "
+                      "landed somewhere else, so nothing was typed")
+    return box, ""
 
 
 def set_cell(editor, row: int, column: str, value: str, expect: str,
@@ -226,10 +270,10 @@ def set_cell(editor, row: int, column: str, value: str, expect: str,
     discount_as_percent.
     """
     key = f"item[{row}].{column}"
-    box = open_cell(editor, row, column, expect)
+    box, why = open_cell(editor, row, column, expect)
     if box is None:
-        return Written(key, value, "", False,
-                       "could not open that cell, or it was not the cell asked for")
+        log.warning("row %d column %r: %s", row, column, why)
+        return Written(key, value, "", False, why)
 
     target = Target(key=key, screen=Screen.ORDER_EDITOR,
                     control_type="EditControl", input=Input.TEXT,

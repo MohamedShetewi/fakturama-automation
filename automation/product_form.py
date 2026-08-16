@@ -296,7 +296,12 @@ def _select_one(win, result: Result, item: dict, sku: str, pos: int) -> Verdict:
         # a UI misfire rather than an answer about this SKU.
         attempts.append(attempt_steps)
         log.warning("chooser attempt %d for %r was unusable; retrying", attempt + 1, sku)
-        dismiss(win, Scope(win, dialog=product_dialog(win)))
+        # dismiss() re-checks for the dialog itself, so hand it the scope only
+        # when there is one - looking the dialog up here is what walked into a
+        # half-disposed tree in the first place.
+        leftover = product_dialog(win)
+        if leftover is not None:
+            dismiss(win, Scope(win, dialog=leftover))
     return Verdict.CONFLICT
 
 

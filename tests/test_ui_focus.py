@@ -115,6 +115,53 @@ class FakeButton:
         return []
 
 
+class Vanishing:
+    """A control that raises when enumerated, as a disposed element does."""
+
+    ControlTypeName = "PaneControl"
+    Name = "gone"
+
+    def GetChildren(self):
+        raise OSError("An event was unable to invoke any of the subscribers")
+
+
+class Solid:
+    ControlTypeName = "ButtonControl"
+
+    def __init__(self, name, children=()):
+        self.Name = name
+        self._children = list(children)
+
+    def GetChildren(self):
+        return self._children
+
+
+class TestFindAllSurvivesADisposedTree:
+    """The walks happen exactly when the tree is unstable - just after a
+    dialog closes, while SWT disposes its children. A branch that evaporates
+    mid-walk must not abort the whole search."""
+
+    def test_a_vanishing_branch_does_not_abort_the_walk(self):
+        root = Solid("root", [Vanishing(), Solid("wanted")])
+        found = ui.find_all(root, lambda c: c.Name == "wanted")
+        assert [c.Name for c in found] == ["wanted"]
+
+    def test_a_vanishing_root_yields_nothing_rather_than_raising(self):
+        assert ui.find_all(Vanishing(), lambda c: True) == []
+
+    def test_siblings_after_the_vanishing_one_are_still_reached(self):
+        # Order matters: the old code raised on the first bad child and never
+        # saw anything past it.
+        root = Solid("root", [Solid("a"), Vanishing(), Solid("b"), Vanishing(), Solid("c")])
+        found = ui.find_all(root, lambda c: c.ControlTypeName == "ButtonControl")
+        assert [c.Name for c in found] == ["a", "b", "c"]
+
+    def test_a_vanishing_branch_deep_in_the_tree(self):
+        root = Solid("root", [Solid("mid", [Vanishing(), Solid("leaf")])])
+        found = ui.find_all(root, lambda c: c.Name == "leaf")
+        assert [c.Name for c in found] == ["leaf"]
+
+
 class TestWhichDialogsMayBeClosed:
     """A box that reports may be closed; a box that asks may not.
 
