@@ -22,7 +22,7 @@ GitHub plays it in the browser when you open that link. To play it without leavi
 this page, use the raw URL once the repo is pushed:
 
 ```html
-<video src="https://github.com/<owner>/<repo>/raw/master/media/final.mp4" controls></video>
+<video src="https://github.com/MohamedShetewi/fakturama-automation/raw/master/media/final.mp4" controls></video>
 ```
 
 ---
