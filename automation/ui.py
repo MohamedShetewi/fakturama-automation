@@ -348,6 +348,39 @@ def grid_rows(dialog) -> list[list[str]]:
     return grid_read(dialog).rows
 
 
+def items_grid(editor):
+    """The order's Items table, found by its own label.
+
+    Emphatically not "the smallest pane over 150px", which is how the chooser
+    and list views are found. That heuristic works there because those windows
+    contain one table; an order editor contains several boxes of similar size,
+    and the moment the item table grew past the Remarks box below it the
+    heuristic silently picked Remarks instead.
+
+    The consequence was the worst kind: reading the wrong pane returns *empty*
+    rather than obviously wrong, so a chooser that had correctly added a line
+    looked like it had done nothing - and the retry that followed added the
+    same product again. Three chairs and two mats on a two-line order, with
+    every step reporting failure while it worked.
+    """
+    labels = [t for t in find_all(editor, lambda c: c.ControlTypeName == "TextControl")
+              if t.Name == "Items"]
+    if len(labels) != 1:
+        raise UIError(f"expected one 'Items' label in the editor, found {len(labels)}")
+    top = labels[0].BoundingRectangle.top
+
+    candidates = []
+    for p in find_all(editor, lambda c: c.ControlTypeName == "PaneControl", 16):
+        r = p.BoundingRectangle
+        # Starts level with the label, and spans the editor: the table body.
+        if top - 12 <= r.top <= top + 48 and r.width() > 800 and r.height() > 60:
+            candidates.append(p)
+    if not candidates:
+        raise UIError("no Items table beside the 'Items' label")
+    # Innermost of the nested panes is the table itself rather than its frame.
+    return min(candidates, key=lambda p: p.BoundingRectangle.width() * p.BoundingRectangle.height())
+
+
 def item_rows(editor) -> GridRead:
     """Every row of the order's Items grid.
 
@@ -356,7 +389,12 @@ def item_rows(editor) -> GridRead:
     Clicking the row header first makes the selection row-shaped, and only
     then does Ctrl+A cover the table.
     """
-    return grid_read(editor, dx=config.GRID_ROW_HEADER_DX, select_all=True)
+    try:
+        pane = items_grid(editor)
+    except UIError as exc:
+        log.warning("could not locate the Items table: %s", exc)
+        return GridRead([], "no-pane")
+    return grid_read(editor, dx=config.GRID_ROW_HEADER_DX, select_all=True, pane=pane)
 
 
 @dataclass(frozen=True)
@@ -379,19 +417,23 @@ class GridRead:
         return self.how == "read"
 
 
-def grid_read(dialog, *, dx: int = None, select_all: bool = True) -> GridRead:
+def grid_read(dialog, *, dx: int = None, select_all: bool = True, pane=None) -> GridRead:
     """Read a grid, reporting whether the read itself can be trusted.
 
     `dx` is how far into the grid to click: a data cell by default, or the row
     header for a cell-selecting grid - see config.GRID_ROW_HEADER_DX.
+
+    `pane` names the table explicitly. Callers that can identify their grid by
+    something better than size should: see items_grid.
     """
     dx = config.GRID_DATA_DX if dx is None else dx
-    try:
-        pane = grid_pane(dialog)
-    except UIError:
-        # When a filter matches nothing the grid body collapses, and there is
-        # no pane left to click. That is an empty result, not a failure.
-        return GridRead([], "no-pane")
+    if pane is None:
+        try:
+            pane = grid_pane(dialog)
+        except UIError:
+            # When a filter matches nothing the grid body collapses, and there
+            # is no pane left to click. That is an empty result, not a failure.
+            return GridRead([], "no-pane")
     r = pane.BoundingRectangle
     auto.SetClipboardText("")
     # An inline cell editor left open from an earlier click swallows the

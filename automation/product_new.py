@@ -203,8 +203,8 @@ def vat_names_for(items: list[dict]) -> tuple[Result, dict[str, str]]:
 
     log_result = Result()
     names: dict[str, str] = {}
-    for percent in sorted({str(i["vat_percent"]) for i in items}):
-        result, name = ensure_vat(f"VAT {percent.rstrip('0').rstrip('.')}%", f"{percent}%")
+    for percent in sorted({actions.plain_number(i["vat_percent"]) for i in items}):
+        result, name = ensure_vat(f"VAT {percent}%", f"{percent}%")
         log_result.steps.extend(result.steps)
         if name:
             names[percent] = name
@@ -217,7 +217,7 @@ def create_products(items: list[dict], vat_names: dict[str, str]) -> Result:
     win = ui.window()
     ui.activate(win)
     for item in sorted(items, key=lambda i: i["position"]):
-        vat_name = vat_names.get(str(item["vat_percent"]))
+        vat_name = vat_names.get(actions.plain_number(item["vat_percent"]))
         if vat_name is None:
             missing = Step("3.7d", f"set VAT for {item['sku']!r}")
             missing.detail = (

@@ -56,6 +56,8 @@ class Input(str, Enum):
     # '$297.50'. Comparing the strings would fail a write that was perfectly
     # correct, so the read-back is compared as a number.
     MONEY = "money"
+    # Same problem, different suffix: a rate written '19.0' comes back '19%'.
+    PERCENT = "percent"
 
 
 class Screen(str, Enum):
@@ -890,8 +892,10 @@ CATALOG: tuple[Target, ...] = (
         screen=Screen.VAT_EDITOR,
         control_type="EditControl",
         name="Value",
-        input=Input.TEXT,
-        note="Spec 3.6: the percentage.",
+        input=Input.PERCENT,
+        note="Spec 3.6: the percentage. The field normalises what it is given - "
+             "'19.0' is stored and redisplayed as '19%' - so the write is "
+             "verified as a number.",
     ),
     Target(
         key="vat.set_as_standard",

@@ -345,6 +345,9 @@ def complete_order(doc: dict, *, follow_up: bool = True, order_title: str = None
 
         number = actions.read_value(find_control("order.number", Scope(win, editor))).strip()
         reference = actions.read_value(find_control("order.cust_ref", Scope(win, editor))).strip()
+        # Stage 5 needs this and cannot work it out for itself: the number is
+        # Fakturama's to assign, and after saving it is also the editor's title.
+        result.context["order_number"] = number
 
         step_4_1_confirm(win, editor, result, order)
         step_4_2_order_level(win, editor, result)

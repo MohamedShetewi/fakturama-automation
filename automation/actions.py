@@ -194,6 +194,51 @@ def parse_money(text: str) -> Decimal | None:
         return None
 
 
+def plain_number(value) -> str:
+    """A number with no trailing zeros, exponent or symbol: 19.0 -> '19'.
+
+    normalize() alone is not enough - it turns 20.0 into 2E+1 - so the result
+    is formatted with 'f'.
+
+    Worth its own function because the obvious string approach is right often
+    enough to look safe. '19.0'.rstrip('0').rstrip('.') gives '19', and even
+    '20.0' survives, because rstrip stops at the '.'. But a percentage that
+    arrives as a whole number does not: '20'.rstrip('0') is '2'. The schema
+    types these as numbers, so whether a 20% rate reaches here as 20 or 20.0
+    depends on how the model happened to emit it - and a VAT rate of 2% booked
+    where 20% was meant is not a rounding error.
+    """
+    number = value if isinstance(value, Decimal) else Decimal(str(value))
+    return f"{number.normalize():f}"
+
+
+def _set_percent(resolved: Resolved, value) -> Written:
+    """Type a percentage and verify the number rather than the rendering.
+
+    The field reformats what it is given: '19.0' comes back as '19%'. That is
+    the same rate written a different way, and comparing the two as strings
+    failed a write that had landed exactly right.
+    """
+    # Callers name a rate either way - 19, 19.0 or '19%' - so the suffix is
+    # parsed off rather than rejected. plain_number itself stays strict: it
+    # formats numbers, and quietly accepting junk there would hide a real
+    # mistake somewhere upstream.
+    want = value if isinstance(value, Decimal) else parse_money(str(value))
+    if want is None:
+        return Written(resolved.key, str(value), "", False,
+                       f"{value!r} is not a readable percentage")
+    wrote = plain_number(want)
+    written = _set_text(resolved, wrote)
+    got = parse_money(written.read_back)
+    if got is not None and got == want:
+        return Written(resolved.key, wrote, written.read_back, True)
+    if got is None:
+        return Written(resolved.key, wrote, written.read_back, False,
+                       f"read back {written.read_back!r}, which holds no number")
+    return Written(resolved.key, wrote, written.read_back, False,
+                   f"wrote {want}%, field holds {got}%")
+
+
 def _set_money(resolved: Resolved, value: Decimal) -> Written:
     """Type an amount, then verify the number rather than the rendering.
 
@@ -334,6 +379,8 @@ def set_value(key: str, value, scope: Scope) -> Written:
         return _set_combo(resolved, str(value))
     if t.input is Input.MONEY:
         return _set_money(resolved, Decimal(str(value)))
+    if t.input is Input.PERCENT:
+        return _set_percent(resolved, value)
     raise UIError(f"{t.key}: input kind {t.input} cannot be written")
 
 

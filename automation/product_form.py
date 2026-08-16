@@ -234,6 +234,72 @@ def step_3_3_choose(win, dlg, result: Result, sku: str, position: int,
     return verdict
 
 
+def _select_one(win, result: Result, item: dict, sku: str, pos: int) -> Verdict:
+    """3.2-3.3 for one item, retried while the chooser misbehaves.
+
+    Each attempt re-reads how many lines the order already has for this SKU,
+    which is what makes retrying safe: an attempt that did add the line is seen
+    by the next one, which then skips instead of adding a second.
+
+    Only the chooser's own flakiness is retried. A CONFLICT that means
+    something - two products matching one SKU, a selection that came back with
+    the wrong SKU - is returned immediately, because trying again would just
+    reach the same wrong answer more slowly.
+    """
+    attempts = []
+    for attempt in range(config.CHOOSER_ATTEMPTS):
+        editor = ui.activate_editor(win, "New Order", ui.order_editor)
+
+        # Count what the order already holds for this SKU *before* opening the
+        # chooser. Once it is open the order is behind a modal and cannot be
+        # read, and after it closes there is nothing to compare against - so
+        # the baseline has to be taken now or not at all.
+        existing, how = order_items.read(editor)
+        if how != "read":
+            step = Step(f"3.3[{pos}]", f"find SKU {sku!r}")
+            step.detail = (
+                f"could not read the order's existing lines ({how}); without a "
+                "baseline there is no way to tell whether the chooser added one"
+            )
+            result.steps.append(step)
+            return Verdict.CONFLICT
+
+        before = len(order_items.find(existing, sku))
+        if before:
+            # Already on the order. Selecting it again would add a second line
+            # for the same product rather than replace the first - measured, a
+            # re-run turned two lines into four.
+            step = Step(f"3.3[{pos}]", f"find SKU {sku!r}")
+            step.ok = True
+            step.detail = (f"the order already has {before} line(s) for it; "
+                           "not adding another")
+            if attempts:
+                step.detail += f" (after {len(attempts)} unusable attempt(s))"
+            result.steps.append(step)
+            return Verdict.UNIQUE
+
+        attempt_steps = Result()
+        try:
+            dlg = step_3_2_open_selector(win, Scope(win, editor), attempt_steps, pos)
+            verdict = step_3_3_choose(win, dlg, attempt_steps, sku, pos, before)
+        except UIError as exc:
+            verdict = Verdict.CONFLICT
+            failed = Step(f"3.2[{pos}]", "open Select a product")
+            failed.detail = str(exc)
+            attempt_steps.steps.append(failed)
+
+        if verdict is not Verdict.CONFLICT or attempt == config.CHOOSER_ATTEMPTS - 1:
+            result.steps.extend(attempt_steps.steps)
+            return verdict
+
+        # Worth another go: the chooser closed without doing anything, which is
+        # a UI misfire rather than an answer about this SKU.
+        attempts.append(attempt_steps)
+        log.warning("chooser attempt %d for %r was unusable; retrying", attempt + 1, sku)
+        dismiss(win, Scope(win, dialog=product_dialog(win)))
+    return Verdict.CONFLICT
+
+
 def select_products(order: dict) -> tuple[Result, list[dict]]:
     """3.1 Run the selection branch for every item, in source order.
 
@@ -254,38 +320,7 @@ def select_products(order: dict) -> tuple[Result, list[dict]]:
                 result.steps.append(step)
                 continue
 
-            editor = ui.activate_editor(win, "New Order", ui.order_editor)
-
-            # Count what the order already holds for this SKU *before* opening
-            # the chooser. Once it is open the order is behind a modal and
-            # cannot be read, and after it closes there is nothing to compare
-            # against - so the baseline has to be taken now or not at all.
-            existing, how = order_items.read(editor)
-            if how != "read":
-                step = Step(f"3.3[{pos}]", f"find SKU {sku!r}")
-                step.detail = (
-                    f"could not read the order's existing lines ({how}); without a "
-                    "baseline there is no way to tell whether the chooser added one"
-                )
-                result.steps.append(step)
-                break
-            before = len(order_items.find(existing, sku))
-            if before:
-                # Already on the order. Selecting it again would add a second
-                # line for the same product rather than replace the first -
-                # measured, a re-run turned two lines into four. Steps here get
-                # re-run all the time, because anything downstream failing
-                # means starting the sequence over, so adding must be
-                # conditional on what the order already holds.
-                step = Step(f"3.3[{pos}]", f"find SKU {sku!r}")
-                step.ok = True
-                step.detail = f"the order already has {before} line(s) for it; not adding another"
-                result.steps.append(step)
-                continue
-
-            scope = Scope(win, editor)
-            dlg = step_3_2_open_selector(win, scope, result, pos)
-            verdict = step_3_3_choose(win, dlg, result, sku, pos, before)
+            verdict = _select_one(win, result, item, sku, pos)
             if verdict is Verdict.NONE:
                 to_create.append(item)
 

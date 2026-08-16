@@ -46,6 +46,11 @@ class Step:
 @dataclass
 class Result:
     steps: list[Step] = field(default_factory=list)
+    # Values a stage discovered that a later one needs - the order's number,
+    # say, which is only knowable once Fakturama has assigned it. Kept beside
+    # the steps rather than returned separately so a stage's signature stays
+    # "give me the document, get back what happened".
+    context: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:

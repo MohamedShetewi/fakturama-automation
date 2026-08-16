@@ -172,7 +172,10 @@ def open_cell(editor, row: int, column: str, expect: str):
     None rather than typing into whatever it found - writing a quantity into
     the SKU column raises nothing at all, it just books a different product.
     """
-    grid = ui.grid_pane(editor)
+    # items_grid, not grid_pane: the generic "smallest pane" heuristic picks
+    # the Remarks box on a tall order, and a cell editor opened there would
+    # take the typed quantity into the wrong widget entirely.
+    grid = ui.items_grid(editor)
     r = grid.BoundingRectangle
     auto.SendKeys("{Esc}", waitTime=0.1)
     y = r.top + config.GRID_FIRST_ROW_DY + row * config.GRID_ROW_HEIGHT

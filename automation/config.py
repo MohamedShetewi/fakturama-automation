@@ -145,6 +145,14 @@ SHIPPING_FREE = "Free of shipping costs"
 
 PRODUCT_DIALOG_TITLE = "Select a product"
 
+# How many times to open the chooser for one SKU before giving up. The dialog
+# is genuinely flaky: it rebuilds its widget tree on every filter change and
+# has been measured disposing itself mid-paste, so the search term never lands
+# and nothing is added. Retrying is safe because the line count for that SKU is
+# re-read before each attempt - if an earlier one did add the line, the next
+# sees it and skips.
+CHOOSER_ATTEMPTS = 3
+
 # Tooltip hovers are intermittent; retry before falling back to a structural
 # match, because guarded icons refuse to be clicked without confirmation.
 TOOLTIP_ATTEMPTS = 3
