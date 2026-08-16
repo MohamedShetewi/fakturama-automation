@@ -1,3 +1,8 @@
 openai>=1.60
 pydantic>=2.7
 pytest>=8.0
+
+# UI automation half (spec 1.3+). uiautomation talks to Windows UI Automation
+# through comtypes. Deliberately not pywinauto: that pulls in pywin32, whose
+# win32ui needs the MFC runtime, which is not present on a stock Windows box.
+uiautomation>=2.0.29
