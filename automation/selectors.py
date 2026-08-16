@@ -66,6 +66,7 @@ class Screen(str, Enum):
     PAYMENT_EDITOR = "payment_editor"  # the 'New Term of Payment' editor
     VAT_EDITOR = "vat_editor"          # the 'New TAX Rate' editor
     PRODUCT_EDITOR = "product_editor"  # the 'New product' editor
+    INVOICE_EDITOR = "invoice_editor"  # the 'New Invoice' editor, opened from an Order
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,127 @@ CATALOG: tuple[Target, ...] = (
         control_type="TextControl",
         name="Documents",
         note="Spec 4.5. Data panel entry.",
+    ),
+    # --- 5.1-5.6: the linked Invoice -----------------------------------------
+    # Most of this screen is confirmed, not filled: the follow-up copies the
+    # Order's values across, and 5.1's job is to check that it really did.
+    Target(
+        key="invoice.number",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="No.",
+        read_only=True,
+        note="Spec 5.1: left exactly as proposed.",
+    ),
+    Target(
+        key="invoice.date",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="Date",
+        read_only=True,
+        note="Spec 5.1: left as proposed - this is the invoice's own date, not "
+             "the order's.",
+    ),
+    Target(
+        key="invoice.service_date",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="Service date",
+        read_only=True,
+        note="Spec 5.1: left as proposed.",
+    ),
+    Target(
+        key="invoice.order_date",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="Order Date",
+        read_only=True,
+        note="Spec 5.1: must equal the extracted Order Date, carried over.",
+    ),
+    Target(
+        key="invoice.cust_ref",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        name="Cust.Ref.",
+        read_only=True,
+        note="Spec 5.1: copied from the Order.",
+    ),
+    Target(
+        key="invoice.vat_mode",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="ComboBoxControl",
+        name="VAT",
+        read_only=True,
+        note="Spec 5.1: copied from the Order; must still read 'With VAT'.",
+    ),
+    Target(
+        key="invoice.address_text",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="Invoice address",
+        anchor_side="below",
+        read_only=True,
+        note="Spec 5.1. Anchored on the tab's own label - the field has neither "
+             "a Name nor a tooltip.",
+    ),
+    Target(
+        key="invoice.total_net",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        name="Total Net",
+        read_only=True,
+    ),
+    Target(
+        key="invoice.vat_amount",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        name="VAT",
+        read_only=True,
+        note="Distinguished from the 'VAT' combo by control type.",
+    ),
+    Target(
+        key="invoice.total",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        name="Total",
+        read_only=True,
+    ),
+    Target(
+        key="invoice.paid",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="CheckBoxControl",
+        name="paid",
+        note="Spec 5.3. Ticking it swaps the row beside it: 'Due Days'/'Pay "
+             "Until' are replaced by 'at <date>' and 'Value'.",
+    ),
+    Target(
+        key="invoice.payment_method",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="ComboBoxControl",
+        anchor="paid",
+        anchor_side="right",
+        input=Input.COMBO,
+        note="Spec 5.2. Unnamed; the 'paid' checkbox beside it is the only "
+             "labelled neighbour, which is why a checkbox counts as an anchor.",
+    ),
+    Target(
+        key="invoice.payment_date",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        anchor="at",
+        anchor_side="right",
+        input=Input.SEGMENTED_DATE,
+        note="Spec 5.3. Exists only once 'paid' is ticked. Same segmented "
+             "CDateTime as the order's Date - not a text field.",
+    ),
+    Target(
+        key="invoice.paid_value",
+        screen=Screen.INVOICE_EDITOR,
+        control_type="EditControl",
+        name="Value",
+        input=Input.MONEY,
+        note="Spec 5.3: the amount paid, which must be the full Invoice Total. "
+             "Fakturama prefills it with exactly that.",
     ),
     # --- unlabeled icons: no Name at all, resolved purely by tooltip ---------
     Target(

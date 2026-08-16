@@ -71,7 +71,31 @@ arithmetic error, and do not round. Downstream checks compare your read against 
 the document's own printed totals; silently correcting a value defeats that check.
 
 Report percentages as plain numbers: 19% is 19, not 0.19. If a line shows no \
-discount, return null rather than 0.\
+discount, return null rather than 0.
+
+THE DISCOUNT COLUMN
+The line items table often carries a discount column, headed Disc., Discount, \
+Allowance, Rabatt, %, or similar, and it is easy to skip when most rows leave it \
+blank. Read it for every row. A cell that is blank, or shows a dash, is null - \
+not 0.
+
+Use it as a cross-check before you answer: if a row's printed line total is less \
+than quantity x unit net price, that difference is a discount and it is stated \
+somewhere on the row - go back and read it. Report the figure the page prints; \
+do not calculate one to make the arithmetic work, and do not adjust any other \
+number to compensate.
+
+IDENTIFIERS TO COPY CHARACTER FOR CHARACTER
+external_reference, every SKU, the customer identifier and the alias are opaque \
+strings, not data to be tidied. Transcribe each one exactly: same characters, \
+same case, same hyphens, in the same positions. Do not normalise a date-like \
+run of digits inside them, do not insert or remove separators, and do not make \
+one identifier look more like another. 'WEB-2026-0714-A17' is not \
+'WEB-2026-07-14-A17'; a single moved hyphen makes it a different order.
+
+Nothing downstream can catch this. The arithmetic checks compare numbers, and a \
+mistyped reference is still a perfectly valid string - it just points at \
+nothing.\
 """
 
 

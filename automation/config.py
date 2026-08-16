@@ -126,6 +126,12 @@ DOCUMENT_COL = {"type": 0, "number": 1, "date": 2, "customer": 3,
 ORDER_STATE_OPEN = "COMMAND_ORDER_PENDING"
 DOCUMENT_TYPE_ORDER = "ICON_ORDER"
 
+# Spec 5.5's "expected state" for the Invoice. Measured on one paid invoice, so
+# it is only asserted when the source says the order was paid - what an unpaid
+# invoice reports here has not been observed, and guessing it would turn a
+# check into a coin toss.
+INVOICE_STATE_PAID = "COMMAND_CHECKED"
+
 # --- spec 4.2 order-level values ---------------------------------------------
 
 # Confirmed, never set: the extraction schema has no order-level discount or

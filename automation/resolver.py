@@ -54,7 +54,7 @@ class Scope:
     """
 
     def __init__(self, win, editor=None, debtor=None, dialog=None, payment=None,
-                 vat=None, product=None):
+                 vat=None, product=None, invoice=None):
         self.win = win
         self.editor = editor
         self.debtor = debtor
@@ -62,6 +62,7 @@ class Scope:
         self.payment = payment
         self.vat = vat
         self.product = product
+        self.invoice = invoice
         self._tips: dict[tuple, str | None] = {}
 
     def tooltip(self, ctrl) -> str | None:
@@ -81,6 +82,7 @@ class Scope:
             Screen.PAYMENT_EDITOR: self.payment,
             Screen.VAT_EDITOR: self.vat,
             Screen.PRODUCT_EDITOR: self.product,
+            Screen.INVOICE_EDITOR: self.invoice,
         }[t.screen]
         if root is None:
             raise UIError(f"{t.key}: needs the {t.screen.value}, which is not open")
@@ -113,8 +115,10 @@ def _layer1(root, t: Target):
 #: What can serve as a labelled neighbour. A tab's own label is as much a
 #: label as a field caption - the order's address block sits under a tab
 #: called 'Invoice address' and has no Name and no tooltip of its own, so the
-#: tab is the only semantic thing near it.
-_ANCHOR_TYPES = ("TextControl", "TabItemControl")
+#: tab is the only semantic thing near it. A checkbox's label is the same
+#: story: the invoice's payment-method combo is unnamed and sits beside the
+#: 'paid' box, with nothing else near enough to name it.
+_ANCHOR_TYPES = ("TextControl", "TabItemControl", "CheckBoxControl")
 
 
 def _anchor_rect(root, t: Target):
