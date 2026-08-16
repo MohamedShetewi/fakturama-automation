@@ -15,15 +15,14 @@ Read that first if you want the *why*; this file is the *how to run it*.
 
 ## Demo
 
-▶️ **[media/final.mp4](media/final.mp4)** — a recorded run: the order image goes in,
-Fakturama comes out filled and saved.
+▶️ **[Watch the full run on Google Drive](https://drive.google.com/file/d/17WaOYc3PKzXirXtbOAp3hgXJaQJ7-l_r/view?usp=drive_link)**
+— the order image goes in, Fakturama comes out filled and saved. About 12 minutes,
+unedited.
 
-GitHub plays it in the browser when you open that link. To play it without leaving
-this page, use the raw URL once the repo is pushed:
-
-```html
-<video src="https://github.com/<owner>/<repo>/raw/master/media/final.mp4" controls></video>
-```
+> Hosted on **Google Drive** rather than embedded here: GitHub serves files committed
+> to a repo as `application/octet-stream`, so a video in the README downloads instead
+> of playing. The same recording is in the repo at `media/final.mp4` if you'd rather
+> have it locally.
 
 ---
 
