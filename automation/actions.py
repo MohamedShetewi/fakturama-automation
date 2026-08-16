@@ -47,6 +47,36 @@ def escape_keys(text: str) -> str:
 
 
 def _focus(ctrl) -> None:
+    """Put the keyboard on `ctrl`, and check that it actually landed.
+
+    A coordinate click is the reliable route for most SWT widgets, but inside
+    a modal chooser it can miss entirely - measured: clicking the search box
+    left focus on the OK button, so every keystroke went nowhere and the
+    write silently produced an empty field. So the click is verified, and
+    SetFocus is the fallback.
+    """
+    def landed() -> bool:
+        try:
+            focused = auto.GetFocusedControl()
+            if not focused:
+                return False
+            a, b = focused.BoundingRectangle, ctrl.BoundingRectangle
+            return (a.left, a.top, a.right, a.bottom) == (b.left, b.top, b.right, b.bottom)
+        except Exception:
+            return False
+
+    # SetFocus first: it is the non-destructive route, and inside a modal
+    # chooser a coordinate click lands on the OK button instead of the search
+    # box - after which every keystroke is discarded and the write reads back
+    # empty. The click stays as the fallback for widgets SetFocus ignores.
+    try:
+        ctrl.SetFocus()
+        time.sleep(config.SETTLE)
+        if landed():
+            return
+    except Exception as exc:
+        log.debug("SetFocus failed (%s)", exc)
+
     ctrl.Click(simulateMove=False)
     time.sleep(config.SETTLE)
 
@@ -97,13 +127,30 @@ def _set_text(resolved: Resolved, value: str) -> Written:
     """focus -> select all -> real keystrokes -> Tab to commit -> read back."""
     ctrl = resolved.control
     _focus(ctrl)
-    auto.SendKeys("{Ctrl}a", waitTime=0.1)
-    if value == "":
-        auto.SendKeys("{Delete}", waitTime=0.1)
-    else:
+    # Only clear when there is something to clear. Ctrl+A inside a modal
+    # chooser is interpreted by the grid behind the search box, not by the
+    # box, and it takes the keyboard with it - after which every character
+    # typed goes nowhere and the field reads back empty.
+    if (ui.legacy_value(ctrl) or "").strip():
+        auto.SendKeys("{Ctrl}a", waitTime=0.1)
+        if value == "":
+            auto.SendKeys("{Delete}", waitTime=0.1)
+    if value != "":
         auto.SendKeys(escape_keys(value), waitTime=0.03)
     time.sleep(config.SETTLE)
-    auto.SendKeys("{Tab}", waitTime=0.15)   # commit: SWT fires on focus-out
+
+    if not resolved.target.commit_with_tab:
+        # A filter box has nothing to commit, and tabbing out of one whose
+        # term matched nothing clears it - which reads back as "the write
+        # failed" when in fact the search ran and found none.
+        pass
+    elif resolved.target.multiline:
+        # Tab is a literal character in a multi-line Text. Commit by moving
+        # focus with the mouse instead - clicking the control's own label area
+        # is safe and stays inside the editor.
+        auto.SendKeys("{Ctrl}{Home}", waitTime=0.1)
+    else:
+        auto.SendKeys("{Tab}", waitTime=0.15)   # commit: SWT fires on focus-out
     time.sleep(config.SETTLE)
 
     got = read_value(resolved)
@@ -160,15 +207,38 @@ def _set_combo(resolved: Resolved, value: str) -> Written:
         raise UIError(f"{resolved.key}: dropdown did not open")
     items = ui.find_all(lists[0], lambda c: c.ControlTypeName == "ListItemControl", 3)
     names = [i.Name for i in items]
-    match = [i for i in items if i.Name == value]
+    # Compare on stripped text: Fakturama's payment codes carry a trailing
+    # space ('Credit transfer '), so an exact match would never fire and the
+    # combo would silently keep its default.
+    want = (value or "").strip()
+    match = [i for i in items if (i.Name or "").strip() == want]
     if not match:
         auto.SendKeys("{Esc}", waitTime=0.2)
         raise UIError(f"{resolved.key}: no option {value!r}; available: {names}")
-    match[0].Click(simulateMove=False)
+    item = match[0]
+    # A long dropdown is virtualised: an option scrolled out of view reports a
+    # (0,0,0,0) rectangle, and clicking it moves the cursor nowhere - which is
+    # how 'Germany' silently left the Country combo on 'United States'.
+    if item.BoundingRectangle.width() == 0:
+        log.debug("%s: option %r is scrolled out of view, bringing it in",
+                  resolved.key, value)
+        try:
+            item.GetScrollItemPattern().ScrollIntoView()
+            time.sleep(config.SETTLE)
+        except Exception as exc:
+            log.debug("%s: ScrollIntoView unavailable (%s)", resolved.key, exc)
+    if item.BoundingRectangle.width() == 0:
+        # Still not rendered: fall back to keyboard selection, which the
+        # widget resolves internally without needing the item on screen.
+        auto.SendKeys(escape_keys(value), waitTime=0.05)
+        time.sleep(config.SETTLE)
+        auto.SendKeys("{Enter}", waitTime=0.2)
+    else:
+        item.Click(simulateMove=False)
     time.sleep(config.SETTLE * 2)
 
     got = read_value(resolved)
-    if got == value:
+    if (got or "").strip() == want:
         return Written(resolved.key, value, got, True)
     if not got:
         # No readable selection: report honestly rather than assume the click
@@ -212,6 +282,34 @@ def set_value(key: str, value, scope: Scope) -> Written:
     raise UIError(f"{t.key}: input kind {t.input} cannot be written")
 
 
+# --- checkboxes --------------------------------------------------------------
+
+def checkbox_state(resolved: Resolved) -> bool | None:
+    """Read a checkbox via TogglePattern, or None if it will not answer."""
+    try:
+        return bool(resolved.control.GetTogglePattern().ToggleState)
+    except Exception:
+        return None
+
+
+def set_checkbox(key: str, wanted: bool, scope: Scope) -> Written:
+    """Tick or untick, by clicking - never TogglePattern.Toggle().
+
+    Same rule as set_value: drive the widget the way a user would, so SWT's
+    listeners fire, and use the pattern only to *read* the result back.
+    """
+    resolved = find_control(key, scope)
+    before = checkbox_state(resolved)
+    if before is None:
+        raise UIError(f"{resolved.key}: checkbox state is not readable")
+    if before != wanted:
+        resolved.control.Click(simulateMove=False)
+        time.sleep(config.SETTLE)
+    after = checkbox_state(resolved)
+    return Written(resolved.key, str(wanted), str(after), after == wanted,
+                   "" if after == wanted else f"wanted {wanted}, checkbox reads {after}")
+
+
 # --- clicking ----------------------------------------------------------------
 
 def click(key: str, scope: Scope) -> str:
@@ -232,6 +330,20 @@ def click(key: str, scope: Scope) -> str:
             return "invoke"
     except Exception as exc:
         log.debug("%s: InvokePattern unavailable (%s)", resolved.key, exc)
+
+    if resolved.target.control_type == "ButtonControl":
+        # A coordinate click on a modal dialog's button is unreliable - the
+        # chooser's Cancel repeatedly ignored one. Focus plus Space is the
+        # keyboard equivalent of pressing it, and it lands every time.
+        try:
+            ctrl.SetFocus()
+            time.sleep(config.SETTLE)
+            auto.SendKeys("{Space}", waitTime=0.2)
+            log.info("click %s via focus+Space (%s)", resolved.key, resolved)
+            return "space"
+        except Exception as exc:
+            log.debug("%s: focus+Space failed (%s)", resolved.key, exc)
+
     ctrl.Click(simulateMove=False)
     log.info("click %s via real click (%s)", resolved.key, resolved)
     return "click"

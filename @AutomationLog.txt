@@ -1,0 +1,1 @@
+2026-08-16 08:20:24.674 actions.py[167] _set_combo -> Can not move cursor. ListItemControl's BoundingRectangle is (0,0,0,0)[0x0]. SearchProperties: {ControlType: ListItemControl}

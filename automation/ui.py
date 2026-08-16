@@ -106,6 +106,71 @@ def order_editor(win):
     return max(panes, key=lambda p: p.BoundingRectangle.width() * p.BoundingRectangle.height())
 
 
+def order_tabs(win) -> list:
+    """Every New Order editor tab, dirty or not."""
+    return [
+        c for c in find_all(win, lambda c: c.ControlTypeName == "TabItemControl")
+        if (c.Name or "").lstrip("*") == "New Order"
+    ]
+
+
+def activate_order_editor(win, index: int = -1):
+    """Bring a New Order editor to the front and return its pane.
+
+    SWT only realises the controls of the *active* editor, so a New Order tab
+    that is not selected is invisible to UIA - order_editor() returns None
+    even though the tab is right there. Selecting the tab is therefore part of
+    locating the editor, not a nicety.
+    """
+    editor = order_editor(win)
+    if editor is not None:
+        return editor
+    tabs = order_tabs(win)
+    if not tabs:
+        return None
+    tabs[index].Click(simulateMove=False)
+    time.sleep(config.SETTLE * 2)
+    return order_editor(win)
+
+
+_DEBTOR_RE = re.compile(config.DEBTOR_EDITOR_RE)
+
+
+def debtor_editor(win):
+    """The New Debtor editor's content Pane, or None."""
+    panes = find_all(
+        win, lambda c: c.ControlTypeName == "PaneControl" and _DEBTOR_RE.match(c.Name or "")
+    )
+    if not panes:
+        return None
+    return max(panes, key=lambda p: p.BoundingRectangle.width() * p.BoundingRectangle.height())
+
+
+def address_dialog(win):
+    """The modal 'Select the address' chooser, or None."""
+    for w in find_all(win, lambda c: c.ControlTypeName == "WindowControl", 6):
+        if (w.Name or "").startswith(config.ADDRESS_DIALOG_TITLE):
+            return w
+    return None
+
+
+def activate_editor(win, title: str, finder):
+    """Bring the editor whose tab is `title` to the front and return its pane.
+
+    SWT realises only the active editor's controls, so selecting the tab is
+    part of locating any editor that is not already in front.
+    """
+    pane = finder(win)
+    if pane is not None:
+        return pane
+    for item in find_all(win, lambda c: c.ControlTypeName == "TabItemControl"):
+        if (item.Name or "").lstrip("*") == title:
+            item.Click(simulateMove=False)
+            time.sleep(config.SETTLE * 3)
+            return finder(win)
+    return None
+
+
 def is_dirty(win) -> bool:
     """True when the editor has unsaved changes (SWT's '*' title prefix)."""
     items = find_all(win, lambda c: c.ControlTypeName == "TabItemControl")
@@ -134,6 +199,69 @@ def legacy_value(ctrl) -> str | None:
     return value if value is not None else None
 
 
+# --- chooser grids -----------------------------------------------------------
+
+
+def grid_pane(dialog):
+    """The NatTable body inside a chooser dialog."""
+    panes = [p for p in find_all(dialog, lambda c: c.ControlTypeName == "PaneControl", 16)
+             if p.BoundingRectangle.height() > 150]
+    if not panes:
+        raise UIError("no grid pane in this dialog")
+    return min(panes, key=lambda p: p.BoundingRectangle.height())
+
+
+def grid_rows(dialog) -> list[list[str]]:
+    """Read every visible row as a list of cell strings.
+
+    The grid publishes nothing to UIA - no ListItems, no DataItems - but it
+    *does* implement Ctrl+A / Ctrl+C, and copies tab-separated rows. That is
+    the only channel to the row data, and it is enough to decide an exact
+    match rather than guessing from position.
+
+    (An earlier reading of this project concluded the grid was unreadable.
+    That measurement was taken against an empty list: nothing copied because
+    there was nothing in it.)
+    """
+    try:
+        pane = grid_pane(dialog)
+    except UIError:
+        # When a filter matches nothing the grid body collapses, and there is
+        # no pane left to click. That is an empty result, not a failure.
+        return []
+    r = pane.BoundingRectangle
+    auto.SetClipboardText("")
+    # One click only. Reading and then selecting used to click the same row
+    # twice in quick succession, which the chooser took as a double-click -
+    # accepting the row and adding the wrong product to the order.
+    auto.Click(r.left + 80, r.top + config.GRID_FIRST_ROW_DY)
+    time.sleep(config.SETTLE * 2)
+    auto.SendKeys("{Ctrl}a", waitTime=0.2)
+    auto.SendKeys("{Ctrl}c", waitTime=0.3)
+    time.sleep(config.SETTLE)
+    text = auto.GetClipboardText() or ""
+    return [line.split("\t") for line in text.splitlines() if line.strip()]
+
+
+def grid_select_row(dialog, index: int) -> list[str]:
+    """Click the row at `index` and return what the grid says is selected.
+
+    Selecting still needs a coordinate - the rows are painted, not published -
+    but the click is immediately proved by copying the selected row back, so a
+    mis-aimed click is caught rather than committed.
+    """
+    pane = grid_pane(dialog)
+    r = pane.BoundingRectangle
+    y = r.top + config.GRID_FIRST_ROW_DY + index * config.GRID_ROW_HEIGHT
+    auto.SetClipboardText("")
+    auto.Click(r.left + 80, y)
+    time.sleep(config.SETTLE)
+    auto.SendKeys("{Ctrl}c", waitTime=0.3)
+    time.sleep(config.SETTLE)
+    text = auto.GetClipboardText() or ""
+    return text.splitlines()[0].split("\t") if text.strip() else []
+
+
 # --- tooltips ----------------------------------------------------------------
 
 
@@ -154,6 +282,36 @@ def _visible_tooltip(root=None) -> str | None:
     return None
 
 
+def blocking_popups(win) -> list[str]:
+    """Modal windows that will suppress tooltips while they are open.
+
+    An inactive window does not render tooltips, so any open dialog - a
+    chooser left behind, an 'Internal Error' box - silently disables the whole
+    tooltip layer. Every guarded control then drops to a structural match, and
+    the guarded ones refuse to act at all. Diagnosed the hard way: a stray
+    error dialog made the item-delete icon unresolvable, and the positional
+    fallback clicked *paste* instead.
+    """
+    names = [w.Name for w in find_all(win, lambda c: c.ControlTypeName == "WindowControl", 6)
+             if w.Name]
+    # Some dialogs - notably Eclipse's 'Internal Error' box - are siblings of
+    # the shell at the desktop root, not children of it. Searching only inside
+    # the shell reported "no popups" while one held the foreground and
+    # suppressed every tooltip in the application.
+    try:
+        foreground = auto.GetForegroundControl()
+        if foreground is not None:
+            name, cls = foreground.Name or "", foreground.ClassName or ""
+            # Only a real dialog counts. Matching on "not the shell" would
+            # flag the terminal the automation is launched from, and refuse
+            # to do anything at all.
+            if name != (win.Name or "") and (cls == "#32770" or "Error" in name):
+                names.append(name)
+    except Exception:
+        pass
+    return names
+
+
 def tooltip_of(ctrl, timeout: float = None) -> str | None:
     """Hover the control and read its tooltip.
 
@@ -169,20 +327,43 @@ def tooltip_of(ctrl, timeout: float = None) -> str | None:
     cache. Returns None if no tooltip appears.
     """
     timeout = config.TOOLTIP_TIMEOUT if timeout is None else timeout
-    r = ctrl.BoundingRectangle
-    cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
-    auto.SetCursorPos(cx, max(r.top - 220, 5))
-    time.sleep(config.TOOLTIP_PARK)
-    auto.SetCursorPos(cx, cy)
-    time.sleep(0.05)
-    auto.SetCursorPos(cx + 2, cy + 1)
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        txt = _visible_tooltip()
-        if txt:
-            return txt
-        time.sleep(0.15)
+    # Retried: the hover is intermittent, not broken. A single miss otherwise
+    # drops a control to the structural layer - and for a guarded icon (the
+    # 'new debtor' +, the item delete) it blocks the action entirely, because
+    # those refuse to be clicked without semantic confirmation.
+    for attempt in range(config.TOOLTIP_ATTEMPTS):
+        r = ctrl.BoundingRectangle
+        cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
+
+        # Park somewhere that is definitely not another control, then wait for
+        # the previous tooltip to actually disappear. These icons are stacked
+        # a few pixels apart, so a fixed offset parks on a *sibling* - whose
+        # tooltip is then read back as if it were this one's.
+        auto.SetCursorPos(cx, max(r.top - 220, 5))
+        clear_by = time.monotonic() + 1.0
+        while time.monotonic() < clear_by and _visible_tooltip():
+            time.sleep(0.1)
+        time.sleep(config.TOOLTIP_PARK)
+
+        # simulateMove generates the intermediate WM_MOUSEMOVE events SWT's
+        # hover timer waits for. SetCursorPos alone teleports the pointer, and
+        # a pointer that never "moved" onto the control never starts the timer.
+        try:
+            ctrl.MoveCursorToMyCenter(simulateMove=True)
+        except Exception:
+            auto.SetCursorPos(cx, cy)
+        time.sleep(0.05)
+        auto.SetCursorPos(cx + 2, cy + 1)
+        time.sleep(0.05)
+        auto.SetCursorPos(cx - 1, cy)      # a second nudge restarts the timer
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            txt = _visible_tooltip()
+            if txt:
+                return txt
+            time.sleep(0.15)
     return None
 
 

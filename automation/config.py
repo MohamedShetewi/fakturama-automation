@@ -1,4 +1,4 @@
-"""Tunables for the UI automation half (spec 1.3 onwards).
+﻿"""Tunables for the UI automation half (spec 1.3 onwards).
 
 Nothing here touches the UI. The values that hurt when wrong - timeouts and
 the date format the app expects - are named here rather than buried inline.
@@ -22,6 +22,16 @@ WINDOW_RE = r".*Fakturama.*"
 ORDER_EDITOR_RE = r"^\*?New Order$"
 
 NEW_ORDER_BUTTON = "Create: New Order"
+
+# The contact editor is titled 'New Debtor' when opened from the New panel.
+DEBTOR_EDITOR_RE = r"^\*?New (Debtor|Contact)$"
+ADDRESS_DIALOG_TITLE = "Select the address"
+
+# Spec 2.6: Fakturama's own 'no salutation' entry.
+SALUTATION_NONE = "---"
+
+# Spec 2.9: the Debtor's own discount, independent of any order line discount.
+DEBTOR_DISCOUNT = "0%"
 
 # --- timing ------------------------------------------------------------------
 
@@ -63,3 +73,33 @@ TOTALS_LABEL = {PRICE_MODE_NET: "Total Net", PRICE_MODE_GROSS: "Total Gross"}
 EXIT_OK = 0
 EXIT_VERIFICATION_FAILED = 2
 EXIT_UI_FAILED = 3
+
+
+# --- terms of payment (spec 2.10) -------------------------------------------
+
+PAYMENT_EDITOR_TITLE = "New Term of Payment"
+PAYMENT_ZERO_DISCOUNT = "0%"
+PAYMENT_ZERO_DAYS = "0"
+
+# Spec 2.12: the first data row inside the address grid, measured from the
+# grid pane's own top edge. Not an identity claim - the selection is proved
+# afterwards by reading the address the Order shows.
+GRID_FIRST_ROW_DY = 25
+GRID_ROW_HEIGHT = 20
+
+# Column indexes in the copied grid rows, measured from live Ctrl+C output.
+#   address: CUST000001 Marta Klein "Northstar Office GmbH" 10117 Berlin BILLING
+ADDR_COL = {"number": 0, "first_name": 1, "last_name": 2, "company": 3, "zip": 4, "city": 5}
+#   product: 12 juice null null 12.0 <VAT blob>
+PRODUCT_COL = {"sku": 0, "name": 1, "description": 2, "stock": 3, "price": 4}
+
+# --- product chooser (spec 3.2-3.3) -----------------------------------------
+
+PRODUCT_DIALOG_TITLE = "Select a product"
+
+# Tooltip hovers are intermittent; retry before falling back to a structural
+# match, because guarded icons refuse to be clicked without confirmation.
+TOOLTIP_ATTEMPTS = 3
+
+VAT_EDITOR_TITLE = 'New TAX Rate'
+VAT_CODE_STANDARD = 'S (Standard rate)'

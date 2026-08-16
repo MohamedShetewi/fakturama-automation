@@ -1,4 +1,4 @@
-"""The selector catalog: one declarative row per control the flow touches.
+﻿"""The selector catalog: one declarative row per control the flow touches.
 
 Nothing in the flow may name a control inline. A step asks for a key, the
 resolver reads the row, and the fallback chain in resolver.py does the rest.
@@ -55,8 +55,12 @@ class Input(str, Enum):
 
 
 class Screen(str, Enum):
-    MAIN = "main"                  # the application shell and its toolbars
-    ORDER_EDITOR = "order_editor"   # the New Order editor pane
+    MAIN = "main"                    # the application shell and its toolbars
+    ORDER_EDITOR = "order_editor"     # the New Order editor pane
+    DEBTOR_EDITOR = "debtor_editor"   # the New Debtor (contact) editor pane
+    ADDRESS_DIALOG = "address_dialog"  # the modal 'Select the address' chooser
+    PAYMENT_EDITOR = "payment_editor"  # the 'New Term of Payment' editor
+    VAT_EDITOR = "vat_editor"          # the 'New TAX Rate' editor
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,12 @@ class Target:
 
     input: Input = Input.NONE
     read_only: bool = False
+    # A multi-line SWT Text swallows Tab as a literal character instead of
+    # moving focus, so such fields must not be committed with Tab.
+    multiline: bool = False
+    # A live filter box is not a form field: it has nothing to commit, and
+    # tabbing out of one that matched nothing clears it.
+    commit_with_tab: bool = True
     note: str = ""
 
     @property
@@ -259,6 +269,405 @@ CATALOG: tuple[Target, ...] = (
         occurrence=2,
         note="Spec 3.x. Destructive - kept distinct from the add icons by tooltip.",
     ),
+    # --- 'Select the address' chooser (spec 2.2-2.3) ------------------------
+    #
+    # The results grid itself is deliberately absent from this catalog: it is a
+    # canvas-drawn NatTable that publishes no rows to UIA and copies nothing to
+    # the clipboard. Its contents are pixels. Selection is therefore verified
+    # by what the *Order* shows afterwards, never by reading the grid.
+    Target(
+        key="addr_dialog.search",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="EditControl",
+        anchor="Search:",
+        input=Input.TEXT,
+        commit_with_tab=False,
+        note="Spec 2.2. The only Edit in the dialog.",
+    ),
+    Target(
+        key="addr_dialog.ok",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="ButtonControl",
+        name="OK",
+        note="Spec 2.3.",
+    ),
+    Target(
+        key="addr_dialog.cancel",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="ButtonControl",
+        name="Cancel",
+        note="Spec 2.3: the no-exact-row exit into the creation branch.",
+    ),
+    # --- New Debtor editor (spec 2.5-2.7) -----------------------------------
+    Target(
+        key="nav.new_contact",
+        screen=Screen.MAIN,
+        control_type="TextControl",
+        name="New Contact",
+        note="Spec 2.5. A link in the left New panel, not a toolbar button.",
+    ),
+    Target(
+        key="debtor.customer_id",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Customer ID",
+        input=Input.TEXT,
+        read_only=True,
+        note="Spec 2.6: Fakturama proposes it; read to report, never written.",
+    ),
+    Target(
+        key="debtor.company",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Company",
+        input=Input.TEXT,
+        multiline=True,
+        note=(
+            "Spec 2.6. A two-line Text: committing with Tab appends a literal "
+            "tab to the value ('Northstar Office GmbH\\t')."
+        ),
+    ),
+    Target(
+        key="debtor.salutation",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="ComboBoxControl",
+        anchor="Salutation",
+        input=Input.COMBO,
+        note="Spec 2.6: left at '---' when the document supplies none.",
+    ),
+    Target(
+        key="debtor.first_name",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        anchor="First Name Last Name",
+        occurrence=0,
+        input=Input.TEXT,
+        note="Spec 2.6. One label serves both name fields; occurrence splits them.",
+    ),
+    Target(
+        key="debtor.last_name",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        anchor="First Name Last Name",
+        occurrence=1,
+        input=Input.TEXT,
+        note="Spec 2.6.",
+    ),
+    Target(
+        key="debtor.street",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Street",
+        input=Input.TEXT,
+        note="Spec 2.7.",
+    ),
+    Target(
+        key="debtor.zip",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        anchor="ZIP - City",
+        occurrence=0,
+        input=Input.TEXT,
+        note="Spec 2.7. 'ZIP - City' is one label for two fields.",
+    ),
+    Target(
+        key="debtor.city",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        anchor="ZIP - City",
+        occurrence=1,
+        input=Input.TEXT,
+        note="Spec 2.7.",
+    ),
+    Target(
+        key="debtor.country",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="ComboBoxControl",
+        name="Country",
+        input=Input.COMBO,
+        note="Spec 2.7. Defaults to 'United States'; must be set explicitly.",
+    ),
+    Target(
+        key="debtor.email",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="E-Mail",
+        input=Input.TEXT,
+        note="Spec 2.7.",
+    ),
+    Target(
+        key="debtor.telephone",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Telephone",
+        input=Input.TEXT,
+        note="Spec 2.7.",
+    ),
+    Target(
+        key="debtor.additional_name",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="additional name",
+        input=Input.TEXT,
+        note="Spec 2.7: filled only when the source supplies it.",
+    ),
+    Target(
+        key="debtor.address_specification",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Address specification",
+        input=Input.TEXT,
+        note="Spec 2.7: filled only when the source supplies it.",
+    ),
+    # --- 2.8: address roles -------------------------------------------------
+    Target(
+        key="debtor.tab_addresses",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="TabItemControl",
+        name="Addresses",
+        note="Spec 2.7-2.8.",
+    ),
+    Target(
+        key="debtor.tab_miscellaneous",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="TabItemControl",
+        name="Miscellaneous",
+        note="Spec 2.9-2.10: Alias, Discount, Net or Gross and Payment all live here.",
+    ),
+    Target(
+        key="debtor.address_type_open",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="ButtonControl",
+        anchor="address type",
+        note=(
+            "Spec 2.8. The small '>' beside 'address type'; opens the popup "
+            "holding the two role checkboxes. Unnamed and untooltipped."
+        ),
+    ),
+    Target(
+        key="debtor.role_invoice",
+        screen=Screen.MAIN,
+        control_type="CheckBoxControl",
+        name="Invoice address",
+        note="Spec 2.8. In a popup outside the editor pane, hence MAIN scope.",
+    ),
+    Target(
+        key="debtor.role_delivery",
+        screen=Screen.MAIN,
+        control_type="CheckBoxControl",
+        name="Delivery address",
+        note="Spec 2.8: only when billing and delivery are identical.",
+    ),
+    # --- 2.9-2.10: Miscellaneous -------------------------------------------
+    Target(
+        key="debtor.alias",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Alias name",
+        input=Input.TEXT,
+        note="Spec 2.9.",
+    ),
+    Target(
+        key="debtor.discount",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="Discount",
+        input=Input.TEXT,
+        note="Spec 2.9: 0%.",
+    ),
+    Target(
+        key="debtor.net_or_gross",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="ComboBoxControl",
+        name="Net or Gross",
+        input=Input.COMBO,
+        note="Spec 2.9. Options: ---/Net/Gross; defaults to '---'.",
+    ),
+    Target(
+        key="debtor.payment",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="ComboBoxControl",
+        name="Payment",
+        input=Input.COMBO,
+        note=(
+            "Spec 2.10. This combo's option list is the readable oracle for "
+            "whether a Payment Method exists - the terms-of-payment list is "
+            "another opaque NatTable."
+        ),
+    ),
+    # --- 2.10.1-2.10.5: terms of payment ------------------------------------
+    Target(
+        key="nav.terms_of_payment",
+        screen=Screen.MAIN,
+        control_type="TextControl",
+        name="terms of payment",
+        note="Spec 2.10.1. Data panel entry on the left.",
+    ),
+    Target(
+        key="payment.list_new",
+        screen=Screen.MAIN,
+        control_type="ButtonControl",
+        name="Create a new term of payment",
+        note=(
+            "Spec 2.10.2, the green '+'. Its neighbour is 'Delete the marked "
+            "entry' - the Name is what keeps those apart."
+        ),
+    ),
+    Target(
+        key="payment.name",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="EditControl",
+        name="Name",
+        input=Input.TEXT,
+        note="Spec 2.10.3.",
+    ),
+    Target(
+        key="payment.description",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="EditControl",
+        name="Description",
+        input=Input.TEXT,
+        note="Spec 2.10.3.",
+    ),
+    Target(
+        key="payment.account",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="ComboBoxControl",
+        name="Account",
+        input=Input.COMBO,
+        note="Spec 2.10.3: left blank. Catalogued so it is never written by accident.",
+    ),
+    Target(
+        key="payment.code",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="ComboBoxControl",
+        name="!editorPaymentPaymentcode!",
+        input=Input.COMBO,
+        note=(
+            "Spec 2.10.4. The Name is an untranslated i18n key - ugly, but it is "
+            "what the widget publishes, so it is what the catalog records. "
+            "Options carry a trailing space ('Credit transfer ')."
+        ),
+    ),
+    Target(
+        key="payment.cash_discount",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="EditControl",
+        name="Cash discount",
+        input=Input.TEXT,
+        note="Spec 2.10.5: 0.",
+    ),
+    Target(
+        key="payment.discount_days",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="EditControl",
+        name="Discount Days",
+        input=Input.TEXT,
+        note="Spec 2.10.5: 0.",
+    ),
+    Target(
+        key="payment.net_days",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="EditControl",
+        name="Net Days",
+        input=Input.TEXT,
+        note="Spec 2.10.5: 0.",
+    ),
+    Target(
+        key="payment.set_as_standard",
+        screen=Screen.PAYMENT_EDITOR,
+        control_type="ButtonControl",
+        name="Set as standard",
+        note=(
+            "Spec 2.10.5 forbids clicking this. Catalogued precisely so the "
+            "prohibition is checkable, never so it can be invoked."
+        ),
+    ),
+    Target(
+        key="debtor.district",
+        screen=Screen.DEBTOR_EDITOR,
+        control_type="EditControl",
+        name="district",
+        input=Input.TEXT,
+        note="Spec 2.7: filled only when the source supplies it.",
+    ),
+    Target(
+        key="product_dialog.search",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="EditControl",
+        anchor="Search:",
+        input=Input.TEXT,
+        commit_with_tab=False,
+        note="Spec 3.3. Same chooser shell as the address selector.",
+    ),
+    Target(
+        key="product_dialog.ok",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="ButtonControl",
+        name="OK",
+        note="Spec 3.3.",
+    ),
+    Target(
+        key="product_dialog.cancel",
+        screen=Screen.ADDRESS_DIALOG,
+        control_type="ButtonControl",
+        name="Cancel",
+        note="Spec 3.3: the no-exact-SKU exit into the creation branch.",
+    ),
+    # --- 3.4-3.6: VAT / tax rates -------------------------------------------
+    Target(
+        key="nav.vats",
+        screen=Screen.MAIN,
+        control_type="TextControl",
+        name="VATs",
+        note="Spec 3.4. Data panel entry.",
+    ),
+    Target(
+        key="vat.list_new",
+        screen=Screen.MAIN,
+        control_type="ButtonControl",
+        name="Create a new tax rate",
+        note="Spec 3.6, the green '+'. Named, so no positional guessing.",
+    ),
+    Target(
+        key="vat.name",
+        screen=Screen.VAT_EDITOR,
+        control_type="EditControl",
+        name="Name",
+        input=Input.TEXT,
+        note="Spec 3.6: 'VAT' followed by the percentage.",
+    ),
+    Target(
+        key="vat.description",
+        screen=Screen.VAT_EDITOR,
+        control_type="EditControl",
+        name="Description",
+        input=Input.TEXT,
+        note="Spec 3.6: same text as Name.",
+    ),
+    Target(
+        key="vat.code",
+        screen=Screen.VAT_EDITOR,
+        control_type="ComboBoxControl",
+        name="VAT code (E-Invoice)",
+        input=Input.COMBO,
+        note="Spec 3.5-3.6: must be 'S (Standard rate)'. Already the default.",
+    ),
+    Target(
+        key="vat.value",
+        screen=Screen.VAT_EDITOR,
+        control_type="EditControl",
+        name="Value",
+        input=Input.TEXT,
+        note="Spec 3.6: the percentage.",
+    ),
+    Target(
+        key="vat.set_as_standard",
+        screen=Screen.VAT_EDITOR,
+        control_type="ButtonControl",
+        name="Set as standard",
+        note="Spec 3.6 leaves the displayed Standard VAT unchanged; never clicked.",
+    ),
 )
 
 _BY_KEY = {t.key: t for t in CATALOG}
@@ -273,3 +682,6 @@ def target(key: str) -> Target:
 
 def keys() -> list[str]:
     return sorted(_BY_KEY)
+
+
+

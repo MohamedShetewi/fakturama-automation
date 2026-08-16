@@ -116,19 +116,28 @@ def test_other_sendkeys_metacharacters_are_literal(raw):
     assert escape_keys(raw) == raw
 
 
-CLICK_ONLY = ("ButtonControl", "ImageControl")
+VALUE_BEARING = ("EditControl", "ComboBoxControl")
 
 
 def test_every_writable_field_declares_how_to_write_it():
     # set_value dispatches on Input; a writable Edit/ComboBox left at NONE
     # would raise at run time, mid-form.
     for t in CATALOG:
-        if t.read_only or t.control_type in CLICK_ONLY:
+        if t.read_only or t.control_type not in VALUE_BEARING:
             continue
         assert t.input is not Input.NONE, f"{t.key} is writable but declares no input kind"
 
 
 def test_click_targets_declare_no_input_kind():
+    # Buttons, icons and nav links are clicked, never filled.
     for t in CATALOG:
-        if t.control_type in CLICK_ONLY:
+        if t.control_type not in VALUE_BEARING:
             assert t.input is Input.NONE, f"{t.key} is a click target; it cannot take a value"
+
+
+def test_multiline_is_only_claimed_by_text_fields():
+    # The flag exists to suppress the Tab commit, which only makes sense for
+    # a typed text field.
+    for t in CATALOG:
+        if t.multiline:
+            assert t.input is Input.TEXT, f"{t.key} claims multiline but is not a text field"

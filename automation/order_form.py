@@ -89,16 +89,25 @@ def save_enabled(win) -> bool:
 def step_1_3_open_editor(win, result: Result, *, allow_existing: bool = False):
     """1.3 Click Order in the top toolbar and wait for the New Order editor."""
     step = Step("1.3", "open New Order editor")
-    existing = ui.order_editor(win)
+    existing = ui.activate_order_editor(win)
 
-    if existing is not None and not allow_existing and ui.is_dirty(win):
-        step.detail = (
-            "a New Order editor is already open with unsaved changes. Clicking "
-            "Order reuses it, so the run would write into a half-filled form. "
-            "Close it, or pass --allow-existing."
-        )
+    if existing is not None:
+        if not allow_existing and ui.is_dirty(win):
+            step.detail = (
+                "a New Order editor is already open with unsaved changes. Reusing "
+                "it would write into a half-filled form. Close it, or pass "
+                "--allow-existing."
+            )
+            result.steps.append(step)
+            raise UIError(step.detail)
+        # Deliberately do NOT click the toolbar button here. Fakturama reuses
+        # an editor only while it is pristine; once dirty, clicking Order opens
+        # *another* one. Repeated runs otherwise leave a drift of stray tabs.
+        step.ok = True
+        step.detail = "reused the open editor (no click - clicking would open another)"
+        step.layer = _layer_of(find_control("toolbar.new_order", Scope(win)))
         result.steps.append(step)
-        raise UIError(step.detail)
+        return existing
 
     how = actions.click("toolbar.new_order", Scope(win))
     editor = actions.wait_ready(
@@ -106,7 +115,7 @@ def step_1_3_open_editor(win, result: Result, *, allow_existing: bool = False):
         timeout=config.EDITOR_TIMEOUT,
     )
     step.ok = True
-    step.detail = ("reused the open editor" if existing is not None else "opened") + f" ({how})"
+    step.detail = f"opened ({how})"
     step.layer = _layer_of(find_control("toolbar.new_order", Scope(win)))
     result.steps.append(step)
     return editor

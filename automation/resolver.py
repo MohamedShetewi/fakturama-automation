@@ -1,4 +1,4 @@
-"""find_control: turn a catalog key into a live control, via a fallback chain.
+﻿"""find_control: turn a catalog key into a live control, via a fallback chain.
 
     layer 1  UIA property   ControlType + Name
     layer 2  tooltip        ControlType + the text SWT shows on hover
@@ -53,9 +53,13 @@ class Scope:
     per rectangle for the life of the scope.
     """
 
-    def __init__(self, win, editor=None):
+    def __init__(self, win, editor=None, debtor=None, dialog=None, payment=None, vat=None):
         self.win = win
         self.editor = editor
+        self.debtor = debtor
+        self.dialog = dialog
+        self.payment = payment
+        self.vat = vat
         self._tips: dict[tuple, str | None] = {}
 
     def tooltip(self, ctrl) -> str | None:
@@ -68,9 +72,16 @@ class Scope:
     def root_for(self, t: Target):
         if t.screen is Screen.MAIN:
             return self.win
-        if self.editor is None:
-            raise UIError(f"{t.key}: needs the order editor, which is not open")
-        return self.editor
+        root = {
+            Screen.ORDER_EDITOR: self.editor,
+            Screen.DEBTOR_EDITOR: self.debtor,
+            Screen.ADDRESS_DIALOG: self.dialog,
+            Screen.PAYMENT_EDITOR: self.payment,
+            Screen.VAT_EDITOR: self.vat,
+        }[t.screen]
+        if root is None:
+            raise UIError(f"{t.key}: needs the {t.screen.value}, which is not open")
+        return root
 
 
 # --- the layers --------------------------------------------------------------
@@ -112,6 +123,15 @@ def _layer_tooltip(root, t: Target, scope: "Scope"):
     """
     if not t.tooltip:
         return None, "no tooltip in catalog"
+    # A modal popup suppresses tooltips entirely. Say so, rather than let the
+    # layer 'fail' and hand the decision to a positional match that cannot
+    # tell a delete icon from a paste icon.
+    blockers = ui.blocking_popups(scope.win)
+    if blockers:
+        return None, (
+            f"a modal window is open ({blockers}); tooltips do not render while "
+            "the main window is inactive - close it and retry"
+        )
     want = ui.normalize_tip(t.tooltip)
     candidates = ui.find_all(root, lambda c: c.ControlTypeName == t.control_type)
     if not candidates:
@@ -247,3 +267,6 @@ def present(key: str, scope: Scope) -> bool:
         return find_control(key, scope, required=False) is not None
     except UIError:
         return False
+
+
+
