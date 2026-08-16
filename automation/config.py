@@ -114,6 +114,27 @@ GRID_ROW_HEADER_DX = 12
 # refused rather than landing in the wrong column.
 GRID_FIRST_COLUMN_DX = 60
 
+# --- Data > Documents (spec 4.5) ---------------------------------------------
+
+#   ICON_ORDER  TEST001  Thu Aug 04 00:00:00 AST 2011  Lisa Lausser
+#   Web shop No. TEST001  COMMAND_ORDER_PENDING  14.350000381469727  null
+DOCUMENT_COL = {"type": 0, "number": 1, "date": 2, "customer": 3,
+                "reference": 4, "state": 5, "total": 6}
+
+# What an unprocessed order looks like in that state column. Spec 4.5 calls it
+# "open state"; the list reports the command that would advance it.
+ORDER_STATE_OPEN = "COMMAND_ORDER_PENDING"
+DOCUMENT_TYPE_ORDER = "ICON_ORDER"
+
+# --- spec 4.2 order-level values ---------------------------------------------
+
+# Confirmed, never set: the extraction schema has no order-level discount or
+# shipping field, so the spec's "unless the image supplies corresponding
+# order-level values" cannot arise from this pipeline. If that changes, these
+# stop being the expected values and become defaults.
+ORDER_DISCOUNT_NONE = "0%"
+SHIPPING_FREE = "Free of shipping costs"
+
 # --- product chooser (spec 3.2-3.3) -----------------------------------------
 
 PRODUCT_DIALOG_TITLE = "Select a product"

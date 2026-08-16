@@ -184,6 +184,21 @@ def activate_editor(win, title: str, finder):
     return None
 
 
+def editor_named(win, title: str):
+    """The content Pane of the editor whose title is `title`, dirty or not.
+
+    Saving renames these editors: a 'New Order' becomes 'PO000001' the moment
+    it is written, exactly as a 'New product' becomes the product's name. So
+    anything that acts on a document *after* saving it has to look for the new
+    title, not the one it opened.
+    """
+    panes = find_all(win, lambda c: c.ControlTypeName == "PaneControl"
+                     and (c.Name or "").lstrip("*") == title)
+    if not panes:
+        return None
+    return max(panes, key=lambda p: p.BoundingRectangle.width() * p.BoundingRectangle.height())
+
+
 def editor_is_dirty(win, title: str) -> bool:
     """True when an editor titled `title` has unsaved changes.
 

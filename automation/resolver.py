@@ -110,9 +110,16 @@ def _layer1(root, t: Target):
     return hits[0], f"unique {t.control_type} named {t.name!r}"
 
 
+#: What can serve as a labelled neighbour. A tab's own label is as much a
+#: label as a field caption - the order's address block sits under a tab
+#: called 'Invoice address' and has no Name and no tooltip of its own, so the
+#: tab is the only semantic thing near it.
+_ANCHOR_TYPES = ("TextControl", "TabItemControl")
+
+
 def _anchor_rect(root, t: Target):
     labels = ui.find_all(
-        root, lambda c: c.ControlTypeName == "TextControl" and c.Name == t.anchor
+        root, lambda c: c.ControlTypeName in _ANCHOR_TYPES and c.Name == t.anchor
     )
     if not labels:
         return None, f"no label {t.anchor!r}"

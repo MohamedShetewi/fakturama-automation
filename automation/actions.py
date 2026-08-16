@@ -406,10 +406,13 @@ def click(key: str, scope: Scope) -> str:
     except Exception as exc:
         log.debug("%s: InvokePattern unavailable (%s)", resolved.key, exc)
 
-    if resolved.target.control_type == "ButtonControl":
-        # A coordinate click on a modal dialog's button is unreliable - the
-        # chooser's Cancel repeatedly ignored one. Focus plus Space is the
-        # keyboard equivalent of pressing it, and it lands every time.
+    if resolved.target.press_with_keyboard:
+        # Declared per row, not inferred from the control type. A coordinate
+        # click on a modal dialog's button is unreliable - the chooser's Cancel
+        # repeatedly ignored one - so those ask for focus plus Space. Applying
+        # the same route to every button was worse than useless: the toolbar's
+        # Save and the order's follow-up Invoice both took focus, swallowed the
+        # Space and did nothing, while click() reported success.
         try:
             ctrl.SetFocus()
             time.sleep(config.SETTLE)

@@ -83,6 +83,28 @@ def vat_list(win):
     return max(panes, key=lambda p: p.BoundingRectangle.height()) if panes else None
 
 
+def vat_percentages(win) -> dict[str, Decimal]:
+    """Every rate the database holds, as Name -> percent.
+
+    The order's Items grid names a line's tax rate but never states it, so
+    confirming that a line carries 19% means resolving the name against this.
+    Returns percentages, not the fractions the list stores, because that is
+    what the source document quotes.
+    """
+    actions.click("nav.vats", Scope(win))
+    actions.wait_ready(lambda: vat_list(win), "the VATs list", timeout=config.EDITOR_TIMEOUT)
+    read = ui.grid_read(vat_list(win))
+    if not read.trustworthy:
+        raise UIError(f"could not read the VATs list ({read.how})")
+    out = {}
+    for row in read.rows:
+        rate = parse_rate(_cell(row, "value"))
+        name = _cell(row, "name")
+        if name and rate is not None:
+            out[name] = rate * 100
+    return out
+
+
 def step_3_4_open_list(win, result: Result):
     """3.4 Open Data > VATs before creating anything."""
     step = Step("3.4", "open Data > VATs")

@@ -109,6 +109,13 @@ class Target:
     # wrong field. Only ever correct for buttons - two Edits with one Name are
     # two different fields, and picking either is a coin toss.
     any_of_several: bool = False
+    # Press this by focusing it and sending Space, rather than clicking it.
+    # For a modal dialog's OK/Cancel that is the only thing that works - a
+    # coordinate click on the product chooser's Cancel was repeatedly ignored.
+    # For everything else it is the wrong choice and looks like success: the
+    # main toolbar's Save and the order's follow-up Invoice both accepted
+    # focus, swallowed the Space, and did nothing at all.
+    press_with_keyboard: bool = False
     note: str = ""
 
     @property
@@ -251,6 +258,63 @@ CATALOG: tuple[Target, ...] = (
         read_only=True,
         note="The document's gross total - net plus VAT plus shipping.",
     ),
+    # --- 4.1-4.7: completing and following up the order ----------------------
+    Target(
+        key="order.address_text",
+        screen=Screen.ORDER_EDITOR,
+        control_type="EditControl",
+        anchor="Invoice address",
+        anchor_side="below",
+        read_only=True,
+        note="Spec 4.1. The address block the Debtor selection filled in; read "
+             "to confirm it against the extracted one, never written here.",
+    ),
+    Target(
+        key="order.discount",
+        screen=Screen.ORDER_EDITOR,
+        control_type="EditControl",
+        name="Discount",
+        read_only=True,
+        note="Spec 4.2: the *document* discount, distinct from a line's. The "
+             "extraction has no order-level discount field, so this is only "
+             "ever confirmed to be 0%.",
+    ),
+    Target(
+        key="order.shipping",
+        screen=Screen.ORDER_EDITOR,
+        control_type="ComboBoxControl",
+        name="Shipping",
+        read_only=True,
+        note="Spec 4.2: confirmed to be 'Free of shipping costs', never set.",
+    ),
+    Target(
+        key="order.shipping_amount",
+        screen=Screen.ORDER_EDITOR,
+        control_type="EditControl",
+        anchor="Shipping",
+        anchor_side="right",
+        occurrence=1,
+        read_only=True,
+        note="Spec 4.2. Occurrence 1 because the Shipping combo publishes its "
+             "own inner Edit first; the amount sits to its right.",
+    ),
+    Target(
+        key="order.followup_invoice",
+        screen=Screen.ORDER_EDITOR,
+        control_type="ButtonControl",
+        name="Invoice",
+        note="Spec 4.6. Inside the 'Create a follow-up document' group, which "
+             "is what preserves the Order relationship. Distinct from the "
+             "toolbar's 'Create: New Invoice' - different Name, so the two "
+             "cannot be confused.",
+    ),
+    Target(
+        key="nav.documents",
+        screen=Screen.MAIN,
+        control_type="TextControl",
+        name="Documents",
+        note="Spec 4.5. Data panel entry.",
+    ),
     # --- unlabeled icons: no Name at all, resolved purely by tooltip ---------
     Target(
         key="order.address_pick_contact",
@@ -326,6 +390,7 @@ CATALOG: tuple[Target, ...] = (
     ),
     Target(
         key="addr_dialog.ok",
+        press_with_keyboard=True,
         screen=Screen.ADDRESS_DIALOG,
         control_type="ButtonControl",
         name="OK",
@@ -333,6 +398,7 @@ CATALOG: tuple[Target, ...] = (
     ),
     Target(
         key="addr_dialog.cancel",
+        press_with_keyboard=True,
         screen=Screen.ADDRESS_DIALOG,
         control_type="ButtonControl",
         name="Cancel",
@@ -644,6 +710,7 @@ CATALOG: tuple[Target, ...] = (
     ),
     Target(
         key="product_dialog.ok",
+        press_with_keyboard=True,
         screen=Screen.ADDRESS_DIALOG,
         control_type="ButtonControl",
         name="OK",
@@ -651,6 +718,7 @@ CATALOG: tuple[Target, ...] = (
     ),
     Target(
         key="product_dialog.cancel",
+        press_with_keyboard=True,
         screen=Screen.ADDRESS_DIALOG,
         control_type="ButtonControl",
         name="Cancel",
