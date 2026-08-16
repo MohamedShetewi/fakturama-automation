@@ -1,71 +1,124 @@
-# Fakturama Image-to-Cash — extraction stage
+# Fakturama Image-to-Cash
 
-Turns an order image into validated JSON. This is **spec steps 1.1–1.2**; the UI
-automation (1.3 onwards) consumes the JSON this produces.
+Turns an order image into a saved order and a paid invoice in Fakturama, with nothing
+typed by hand. Two halves, with a JSON file between them:
 
-## Why it's split here
-
-The JSON file is a hard boundary between the two halves, which buys three things:
-
-- The extractor is testable **without Fakturama running**, and the automation is
-  developable **without burning API calls** — it runs against a committed fixture.
-- A vision misread is caught by arithmetic before it can reach an accounting system.
-- When something goes wrong end to end, the JSON says which half to look at.
-
-## The reconciliation gate
-
-A vision model will occasionally misread a digit. A misread digit that reaches an
-accounting system is worse than a failed run — so nothing is written until the
-extracted arithmetic agrees with the totals the document itself prints:
-
-| Check | Rule | Spec |
+| Half | Spec | What it does |
 |---|---|---|
-| per line | `qty × unit_net × (1 − discount/100) ≈ printed line total` | §3.16 |
-| net total | `Σ line nets ≈ printed net total` | §4.3 |
-| VAT total | `Σ (line net × vat/100) ≈ printed VAT total` | §4.3 |
-| gross | `printed net + printed VAT ≈ printed gross` | §4.3 |
+| `extraction/` | 1.1–1.2 | reads the image, checks the arithmetic, writes `out/invoice.json` |
+| `automation/` | 1.3–5.7 | drives the Fakturama window from that JSON |
 
-Tolerance ±0.01, absolute — the error being absorbed is cent-rounding, which doesn't
-scale with magnitude. Any failure **halts**: no output file, non-zero exit, and the
-offending row named. That's the spec's "stop for manual review" posture applied one
-stage earlier, to the data itself.
+📄 **[DESIGN.md](DESIGN.md)** — the problem, the approach, and what could be better.
+Read that first if you want the *why*; this file is the *how to run it*.
 
-The per-line formula is the same identity the automation later confirms inside
-Fakturama (§3.16), so a mismatch caught here is a UI round-trip saved.
+---
 
-Every value is a `Decimal`. Never `float` — binary floating point produces spurious
-one-cent failures on exactly the sums being checked.
+## Demo
+
+▶️ **[media/final.mp4](media/final.mp4)** — a recorded run: the order image goes in,
+Fakturama comes out filled and saved.
+
+GitHub plays it in the browser when you open that link. To play it without leaving
+this page, use the raw URL once the repo is pushed:
+
+```html
+<video src="https://github.com/<owner>/<repo>/raw/master/media/final.mp4" controls></video>
+```
+
+---
+
+## Requirements
+
+| | Need | Why |
+|---|---|---|
+| **Python** | 3.11 or newer | the code uses `X \| None` syntax |
+| **OS** | Windows 10/11 | the automation half talks to Windows UI Automation. The extraction half runs anywhere |
+| **Fakturama** | 2.x, installed and **open** | there is no API; the automation drives the real window |
+| **API key** | an OpenAI key | only for reading an image. Tests and `--from-raw` need none |
+
+Python packages — all of `requirements.txt`, installed in one step below:
+
+| Package | For |
+|---|---|
+| `openai>=1.60` | the vision call |
+| `pydantic>=2.7` | the strict schema the model must answer in |
+| `uiautomation>=2.0.29` | driving Fakturama's window, via `comtypes` |
+| `pytest>=8.0` | the test suite |
+
+> **Not pywinauto.** It pulls in `pywin32`, whose `win32ui` needs the MFC runtime,
+> which a stock Windows box does not have.
+
+---
 
 ## Setup
 
+Four steps, from a clone to a passing test run.
+
 ```powershell
-git clone <repo> && cd fakturama-automation
+# 1. get the code
+git clone <repo>
+cd fakturama-automation
+
+# 2. make a virtual environment
 python -m venv .venv
+
+# 3. install everything
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-copy .env.example .env      # then put your key in it
+
+# 4. add your API key
+copy .env.example .env
+notepad .env            # put your key after OPENAI_API_KEY=
 ```
 
-Requires Python 3.11+ (uses `X | None` syntax).
+Check it worked — this needs no key, no network and no Fakturama:
 
-### The API key
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
 
-`.env` at the repo root holds `OPENAI_API_KEY`; it is gitignored, and
-`.env.example` is the tracked template. It's read by `extraction/env.py` — no
-`python-dotenv` dependency, since the format we need is `KEY=VALUE`.
+### About the API key
+
+`.env` lives at the repo root, is gitignored, and `.env.example` is the tracked
+template. It is read by `extraction/env.py` — no `python-dotenv` dependency, since
+the format we need is `KEY=VALUE`.
 
 The real environment wins over the file, so CI and a one-off
-`$env:OPENAI_API_KEY = "<key>"` still override without editing anything. The file
-is only read on the path that actually calls the API — `--from-raw` and the tests
-need no key. A missing key exits `3` and says so, rather than surfacing as a 401
-from inside the SDK.
+`$env:OPENAI_API_KEY = "<key>"` still override without editing anything. The file is
+only read on the path that actually calls the API. A missing key exits `3` and says
+so, rather than surfacing as a 401 from inside the SDK.
 
-## Run
+---
 
-The one command. Extracts `samples\invoice.png` and writes the validated JSON:
+## Run it
+
+**Half 1 — image to JSON.** Writes the validated file the second half consumes:
 
 ```powershell
 .\.venv\Scripts\python.exe -m extraction.cli samples\invoice.png -o out\invoice.json
 ```
+
+**Half 2 — JSON into Fakturama.** Fakturama must be open on screen first, and the
+mouse and keyboard are in use while it runs:
+
+```powershell
+.\.venv\Scripts\python.exe -m automation.cli out\invoice.json
+```
+
+Useful flags while working on one stage: `--stop-after 3.13-3.17` runs up to that
+stage and no further, `--dry-run` touches nothing, `--no-invoice` stops once the
+order is saved, and `-v` reports which fallback layer found each control.
+
+Both halves use the same exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | done and verified |
+| `2` | a check failed — stop for manual review |
+| `3` | could not read the image / could not drive the UI |
+
+---
+
+## What the extraction half prints
 
 Expected output on a document that reconciles:
 
@@ -84,7 +137,7 @@ Two files land in `out\`: `invoice.raw.json` is the model's unmodified response,
 written *before* validation so a bad read can still be inspected;
 `invoice.json` is the contract with the UIA half.
 
-### The other three
+### Running extraction without an API call
 
 ```powershell
 # no API call: re-run the gate on a saved response. Use to re-check a fixture,
@@ -103,14 +156,6 @@ written *before* validation so a bad read can still be inspected;
 `--from-raw` takes the *image path too*, but only to label `meta.source_image`;
 the file is never opened on that path, so it needs neither a key nor a real image.
 
-Exit codes — the interface for anything wrapping this:
-
-| Code | Meaning |
-|---|---|
-| `0` | extracted and reconciled |
-| `2` | reconciliation failed — stop for manual review |
-| `3` | extraction failed — no usable read of the image |
-
 ## Model
 
 Default `gpt-5.6-luna` ($0.20 / $1.20 per MTok), the cheapest vision-capable model in
@@ -127,16 +172,26 @@ $env:EXTRACT_MODEL = "gpt-5.6-terra"   # stronger read on poor scans
 ## Layout
 
 ```
-extraction/
-  config.py     tunables: model, tolerance, rounding policy
-  env.py        loads the gitignored .env (API key), environment wins
-  schema.py     Pydantic models -> the strict JSON Schema + the output contract
-  extract.py    the vision call, with schema-validation retry
-  reconcile.py  the gate: pure arithmetic, no I/O
-  derive.py     deterministic values the automation needs
-  output.py     serialization
-  cli.py        orchestration and exit codes
-tests/          72 tests, no API key required
+extraction/       image -> JSON (spec 1.1-1.2)
+  config.py       tunables: model, tolerance, rounding policy
+  env.py          loads the gitignored .env (API key), environment wins
+  schema.py       Pydantic models -> the strict JSON Schema + the output contract
+  extract.py      the vision call, with schema-validation retry
+  reconcile.py    the gate: pure arithmetic, no I/O
+  derive.py       deterministic values the automation needs
+  output.py       serialization
+  cli.py          orchestration and exit codes
+
+automation/       JSON -> Fakturama (spec 1.3-5.7)
+  selectors.py    the field catalog: every control named in one place
+  resolver.py     finds a control by name, then tooltip, then tree position
+  ui.py           window, dialogs, focus, grid reads via the clipboard
+  actions.py      write a value and read it back to prove it
+  flow.py         the six stages, in order
+  cli.py          orchestration and exit codes
+  *_form.py       one file per screen: order, debtor, payment, product, VAT, invoice
+
+tests/            273 tests. No API key, no network, no Fakturama.
 ```
 
 ## Design notes
@@ -177,15 +232,15 @@ miss — which is what §2.6's "leave Salutation as `---` when none is supplied"
 
 ## Not done
 
-- **Part 1 design doc** — separate deliverable.
-- **UIA automation**, spec 1.3–5.7 — consumes `out/order.json`.
-- **No end-to-end run against a real order image yet.** `samples\invoice.png` is now
-  supplied, and the gate has been run against that document's real values by hand —
-  it reconciles (570.00 / 108.30 / 678.30), and a deliberately corrupted line total
-  is caught and halts at exit `2`. But that transcription was made by hand, not by
-  the model. The gate and the derivations are proven; the *prompt* is not, and will
-  not be until the run above executes with a real key and its output is diffed
-  against a known-correct read.
+See **[DESIGN.md §3](DESIGN.md#3-what-could-be-improved)** for the list, and why each
+one matters. The short version:
+
+- **No OCR alongside the prompt.** The arithmetic gate cannot check a reference
+  number, and one has already come back wrong while adding up perfectly.
+- **One image per run.** No batching.
+- **Fakturama must be open and in front**, so the machine is unusable while the second
+  half runs.
+- **Currency is not handled** — the workspace renders `$` on a EUR order.
 - No OCR cross-check. The spec allows "OCR and/or an LLM"; reconciliation is the safety
   net instead. Worth adding if real scans prove noisy on dense number columns.
 - Single image per run; no batching.
