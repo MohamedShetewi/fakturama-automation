@@ -16,9 +16,11 @@ Two rules this module exists to enforce:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 import uiautomation as auto
 
@@ -136,7 +138,15 @@ def _set_text(resolved: Resolved, value: str) -> Written:
         if value == "":
             auto.SendKeys("{Delete}", waitTime=0.1)
     if value != "":
-        auto.SendKeys(escape_keys(value), waitTime=0.03)
+        if resolved.target.paste:
+            # One keystroke instead of len(value). See Target.paste: a filter
+            # box that re-queries per character does not survive being typed
+            # into, and this is the only field where that trade is correct.
+            auto.SetClipboardText(value)
+            time.sleep(0.2)
+            auto.SendKeys("{Ctrl}v", waitTime=0.15)
+        else:
+            auto.SendKeys(escape_keys(value), waitTime=0.03)
     time.sleep(config.SETTLE)
 
     if not resolved.target.commit_with_tab:
@@ -158,6 +168,49 @@ def _set_text(resolved: Resolved, value: str) -> Written:
         key=resolved.key, wrote=value, read_back=got, ok=(got == value),
         detail="" if got == value else f"wrote {value!r} but field holds {got!r}",
     )
+
+
+def parse_money(text: str) -> Decimal | None:
+    """Read an amount out of whatever the field renders around it.
+
+    '$297.50', '297,50 EUR' and '1.234,56' all name a number; the symbol,
+    the spacing and the separator convention are presentation. Returns None
+    when there is no number at all, which is never the same as zero.
+    """
+    raw = (text or "").strip()
+    digits = re.sub(r"[^\d,.\-]", "", raw)
+    if not re.search(r"\d", digits):
+        return None
+    # Whichever separator appears last is the decimal point; the other one
+    # groups thousands. '1.234,56' and '1,234.56' both mean 1234.56.
+    last_comma, last_dot = digits.rfind(","), digits.rfind(".")
+    if last_comma > last_dot:
+        digits = digits.replace(".", "").replace(",", ".")
+    else:
+        digits = digits.replace(",", "")
+    try:
+        return Decimal(digits)
+    except InvalidOperation:
+        return None
+
+
+def _set_money(resolved: Resolved, value: Decimal) -> Written:
+    """Type an amount, then verify the number rather than the rendering.
+
+    The field reformats what it is given - currency symbol, separators, its
+    own rounding - so a string comparison would report a correct write as a
+    failure. What has to match is the amount.
+    """
+    wrote = f"{value:.2f}"
+    written = _set_text(resolved, wrote)
+    got = parse_money(written.read_back)
+    if got is not None and got == value:
+        return Written(resolved.key, wrote, written.read_back, True)
+    if got is None:
+        return Written(resolved.key, wrote, written.read_back, False,
+                       f"read back {written.read_back!r}, which holds no amount")
+    return Written(resolved.key, wrote, written.read_back, False,
+                   f"wrote {value}, field holds {got}")
 
 
 def _set_segmented_date(resolved: Resolved, value: date) -> Written:
@@ -279,7 +332,29 @@ def set_value(key: str, value, scope: Scope) -> Written:
         return _set_segmented_date(resolved, value)
     if t.input is Input.COMBO:
         return _set_combo(resolved, str(value))
+    if t.input is Input.MONEY:
+        return _set_money(resolved, Decimal(str(value)))
     raise UIError(f"{t.key}: input kind {t.input} cannot be written")
+
+
+# --- saving ------------------------------------------------------------------
+
+def save_editor(pane) -> None:
+    """Save the editor that owns `pane`, with Ctrl+S rather than the toolbar.
+
+    The toolbar Save button applies to whatever Eclipse considers active, and
+    once a run has several dirty editors open that is not reliably the one
+    just filled. Measured on the product editor: clicking Save left it dirty
+    for twelve seconds, while Ctrl+S on the focused editor saved it at once.
+
+    Ctrl+S also names its subject, which is what makes the check afterwards
+    mean anything - 'this editor is no longer dirty' only proves a save if the
+    save was aimed at this editor.
+    """
+    pane.SetFocus()
+    time.sleep(config.SETTLE)
+    auto.SendKeys("{Ctrl}s", waitTime=0.2)
+    time.sleep(config.SETTLE)
 
 
 # --- checkboxes --------------------------------------------------------------

@@ -1,14 +1,27 @@
 """Spec 3.4-3.6: reuse or create the VAT rate an item needs.
 
-3.5's reuse test is deliberately strict - Name, Value *and* the E-Invoice code
-must all agree - because a VAT record that merely looks right books the wrong
-tax. The list is readable via Ctrl+C, so that comparison is made on real rows
-rather than inferred.
+3.5 keys the reuse test on the *rate*, not on the name. An earlier draft
+matched the Name exactly and it was wrong twice over against the live
+database, which holds:
+
+    Tax-free    Free of Tax    0.0
+    MwSt. 19%   null           0.19
+
+Names are whatever the bookkeeper typed - German here - so searching for
+'VAT 19%' finds nothing and creates a duplicate 19% rate. And the list stores
+rates as *fractions* while the editor and the extracted order speak percent,
+so the old string comparison pitted '0.19' against '19' and reported a
+conflict on the one row that was actually correct.
+
+The rate is the only part of a VAT record that changes what gets booked, so
+that is what identifies it. Two rows at the same rate is still a halt: they
+are genuinely different records and nothing here can tell which was meant.
 """
 
 from __future__ import annotations
 
 import time
+from decimal import Decimal, InvalidOperation
 
 from . import actions, config, ui
 from .entities import Verdict, classify
@@ -18,6 +31,40 @@ from .ui import UIError
 
 # The VATs list copies as: standard-flag, Name, Description, Value
 VAT_COL = {"standard": 0, "name": 1, "description": 2, "value": 3}
+
+
+def parse_rate(text: str) -> Decimal | None:
+    """Read a VAT rate as a fraction, from either notation.
+
+    '19%' and '0.19' are the same rate; '19' on its own is not, because the
+    list column is unambiguously a fraction. Decimal throughout - a rate that
+    round-trips through float is exactly the kind of silent drift the
+    extraction half's gate exists to catch.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    percent = raw.endswith("%")
+    body = raw.rstrip("%").strip().replace(",", ".")
+    try:
+        value = Decimal(body)
+    except InvalidOperation:
+        return None
+    return value / 100 if percent else value
+
+
+def canonical_rate(rate: Decimal | None) -> str:
+    """A comparable spelling. 'f' rather than str() so 1E+2 never appears."""
+    return "" if rate is None else f"{rate.normalize():f}"
+
+
+def _cell(row, column: str) -> str:
+    index = VAT_COL[column]
+    return (row[index] if len(row) > index else "").strip()
+
+
+def _row_rate(row) -> str:
+    return canonical_rate(parse_rate(_cell(row, "value")))
 
 
 def vat_editor(win):
@@ -46,47 +93,75 @@ def step_3_4_open_list(win, result: Result):
     result.steps.append(step)
 
 
-def step_3_5_reuse_or_none(win, result: Result, name: str, percent: str) -> Verdict:
-    """3.5 Reuse an existing row only if Name, Value and code all agree."""
-    step = Step("3.5", f"look for an exact {name!r}")
-    rows = ui.grid_rows(vat_list(win))
-    verdict, matches = classify(
-        rows, name, key=lambda r: r[VAT_COL["name"]] if len(r) > VAT_COL["name"] else ""
-    )
+def step_3_5_reuse_or_none(win, result: Result, name: str, percent: str) -> tuple[Verdict, str]:
+    """3.5 Reuse the existing rate if there is exactly one at this percentage.
+
+    Returns the verdict and the Name to use downstream - the stored one when
+    reusing, the requested one when creating - because the order line has to
+    name the rate it books against.
+    """
+    step = Step("3.5", f"look for an existing {percent} rate")
+    want = parse_rate(percent)
+    if want is None:
+        step.detail = f"{percent!r} is not a readable VAT rate"
+        result.steps.append(step)
+        return Verdict.CONFLICT, name
+
+    read = ui.grid_read(vat_list(win))
+    if not read.trustworthy:
+        # An unreadable list is not an empty one. Treating it as empty here
+        # would create a second 19% rate alongside the one already there, and
+        # from then on every lookup is ambiguous.
+        step.detail = (
+            f"could not read the VATs list ({read.how}); refusing to conclude "
+            "the rate is missing"
+        )
+        result.steps.append(step)
+        return Verdict.CONFLICT, name
+
+    rows = [r for r in read.rows if r]
+    verdict, matches = classify(rows, canonical_rate(want), key=_row_rate)
+    listed = [(_cell(r, "name"), _cell(r, "value")) for r in rows]
+    chosen = name
 
     if verdict is Verdict.UNIQUE:
         row = matches[0]
-        got = (row[VAT_COL["value"]] if len(row) > VAT_COL["value"] else "").strip()
-        # '19.0' and '19' and '19%' all mean the same rate.
-        want = percent.rstrip("%")
-        same = got.rstrip("%").rstrip("0").rstrip(".") == want.rstrip("0").rstrip(".")
-        if same:
-            step.ok = True
-            step.detail = f"reusing {row[:3]}"
-        else:
-            step.detail = (
-                f"a VAT named {name!r} exists but its Value is {got!r}, not {percent!r}; "
-                "stopping for manual review rather than booking the wrong rate"
-            )
-            verdict = Verdict.CONFLICT
+        chosen = _cell(row, "name")
+        step.ok = True
+        step.detail = f"reusing {chosen!r} ({_cell(row, 'value')})"
+        if chosen.casefold() != name.casefold():
+            # Worth saying out loud: the record is right, its label just is not
+            # the one the caller asked for, and that name goes on the invoice.
+            step.detail += f" - stored under a different name than the requested {name!r}"
     elif verdict is Verdict.NONE:
         step.ok = True
-        step.detail = f"no exact {name!r} among {[r[VAT_COL['name']] for r in rows if r]}; will create"
+        step.detail = f"no {percent} rate among {listed}; will create {name!r}"
     else:
-        step.detail = f"{len(matches)} rows named {name!r}; stopping for manual review"
+        step.detail = (
+            f"{len(matches)} rates at {percent} ({[_cell(m, 'name') for m in matches]}); "
+            "stopping for manual review rather than picking one"
+        )
     result.steps.append(step)
-    return verdict
+    return verdict, chosen
 
 
 def step_3_6_create(win, result: Result, name: str, percent: str) -> None:
     """3.6 Create the VAT: Name and Description, code stays S, Value set,
     Standard left alone, saved once."""
     new = Step("3.6a", "open the new tax rate editor")
-    new.layer = _layer_of(find_control("vat.list_new", Scope(win)))
-    actions.click("vat.list_new", Scope(win))
-    editor = actions.wait_ready(lambda: vat_editor(win), "the New TAX Rate editor",
-                                timeout=config.EDITOR_TIMEOUT)
-    new.ok = True
+    editor = vat_editor(win)
+    if editor is not None:
+        # Clicking again would open a *second* editor, and Eclipse stacks them
+        # happily - a previous run left two '*New TAX Rate' tabs behind that
+        # way, which then made "did the save land?" unanswerable.
+        new.ok = True
+        new.detail = "an editor was already open; reusing it instead of stacking another"
+    else:
+        new.layer = _layer_of(find_control("vat.list_new", Scope(win)))
+        actions.click("vat.list_new", Scope(win))
+        editor = actions.wait_ready(lambda: vat_editor(win), "the New TAX Rate editor",
+                                    timeout=config.EDITOR_TIMEOUT)
+        new.ok = True
     result.steps.append(new)
 
     scope = Scope(win, vat=editor)
@@ -131,28 +206,47 @@ def step_3_6_create(win, result: Result, name: str, percent: str) -> None:
         save.detail = "skipped: an earlier step did not verify, so nothing was written"
         result.steps.append(save)
         return
-    actions.click("toolbar.save", Scope(win))
+    # Ctrl+S on this editor, not the toolbar button. The button applies to
+    # whatever Eclipse considers active, which with several dirty editors open
+    # is not reliably the one just filled - measured on the product editor, it
+    # left the work unsaved while Ctrl+S wrote it at once.
+    actions.save_editor(editor)
+
+    # Nor is the toolbar Save button an oracle. It reflects the *active*
+    # editor, and a run leaves several dirty ones open, so it can stay enabled
+    # long after this tax rate is safely written. The record itself is the
+    # proof: go back to the list and look for the row.
+    want = canonical_rate(parse_rate(percent))
+    actions.click("nav.vats", Scope(win))
     try:
-        actions.wait_ready(
-            lambda: not find_control("toolbar.save", Scope(win)).control.IsEnabled,
-            "Save to go disabled (tax rate written)", timeout=12.0,
+        actions.wait_ready(lambda: vat_list(win), "the VATs list",
+                           timeout=config.EDITOR_TIMEOUT)
+        row = actions.wait_ready(
+            lambda: next((r for r in ui.grid_rows(vat_list(win))
+                          if r and _row_rate(r) == want and _cell(r, "name") == name), None),
+            f"{name!r} to appear in the VATs list", timeout=12.0,
         )
         save.ok = True
-        save.detail = "saved once; Save is disabled again"
+        save.detail = f"written: {[_cell(row, c) for c in ('name', 'description', 'value')]}"
     except UIError as exc:
-        save.detail = f"clicked Save but unsaved changes remain ({exc})"
+        save.detail = f"clicked Save but the rate is not in the list ({exc})"
     result.steps.append(save)
 
 
-def ensure_vat(name: str, percent: str) -> Result:
-    """Run 3.4-3.6 for one required VAT rate."""
+def ensure_vat(name: str, percent: str) -> tuple[Result, str | None]:
+    """Run 3.4-3.6 for one required VAT rate.
+
+    `name` is the label to use if the rate has to be created; `percent` is what
+    identifies it. Returns the step log and the Name the order line should book
+    against - None when the run halted and nothing can be booked.
+    """
     result = Result()
     win = ui.window()
     ui.activate(win)
 
     with ui.Clipboard():
         step_3_4_open_list(win, result)
-        verdict = step_3_5_reuse_or_none(win, result, name, percent)
+        verdict, chosen = step_3_5_reuse_or_none(win, result, name, percent)
         if verdict is Verdict.NONE:
             step_3_6_create(win, result, name, percent)
-    return result
+    return result, (chosen if result.ok else None)

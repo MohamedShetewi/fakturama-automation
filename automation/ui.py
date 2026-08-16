@@ -21,12 +21,16 @@ Three measured facts about Fakturama drive the design of everything above:
 
 from __future__ import annotations
 
+import logging
 import re
 import time
+from dataclasses import dataclass
 
 import uiautomation as auto
 
 from . import config
+
+log = logging.getLogger("automation.ui")
 
 
 class UIError(RuntimeError):
@@ -83,6 +87,15 @@ def window():
 
 
 def activate(win) -> None:
+    """Bring the shell forward, clearing any error box in the way first.
+
+    A modal error dialog does not just sit there: it holds activation, and an
+    inactive application renders no tooltips at all, which silently disables
+    the resolver's semantic layer for the whole run. So clearing it is part of
+    activating, not a separate courtesy.
+    """
+    for report in dismiss_error_dialogs(win):
+        log.warning("cleared before activating: %s", report)
     win.SetActive()
     time.sleep(config.SETTLE)
 
@@ -171,10 +184,22 @@ def activate_editor(win, title: str, finder):
     return None
 
 
-def is_dirty(win) -> bool:
-    """True when the editor has unsaved changes (SWT's '*' title prefix)."""
+def editor_is_dirty(win, title: str) -> bool:
+    """True when an editor titled `title` has unsaved changes.
+
+    The star lives on the *tab*, never on the pane - the pane keeps its clean
+    title through the whole edit. Asking the pane therefore always answers
+    "clean", which is worse than no check at all: a save verified that way
+    passes the instant it is asked, and reports a product written when nothing
+    was.
+    """
     items = find_all(win, lambda c: c.ControlTypeName == "TabItemControl")
-    return any((i.Name or "").startswith("*New Order") for i in items)
+    return any((i.Name or "") == "*" + title for i in items)
+
+
+def is_dirty(win) -> bool:
+    """True when the New Order editor has unsaved changes."""
+    return editor_is_dirty(win, "New Order")
 
 
 # --- reading values ----------------------------------------------------------
@@ -202,6 +227,84 @@ def legacy_value(ctrl) -> str | None:
 # --- chooser grids -----------------------------------------------------------
 
 
+def _runtime_id(ctrl):
+    try:
+        return tuple(ctrl.GetRuntimeId())
+    except Exception:
+        return None
+
+
+def focus_is_inside(root, depth: int = 30) -> bool:
+    """Is the keyboard focus somewhere under `root`?
+
+    Ctrl+A and Ctrl+C are not sent *to* a control - they go wherever the
+    keyboard focus happens to be. Aiming a click at a grid is not the same as
+    the grid having focus, and when it does not, the copy silently reads some
+    other widget.
+
+    This is the guard for a failure that cost a whole session: the product
+    chooser's grid was clicked while focus was still on the Order's Items
+    grid, so Ctrl+A selected the order lines and Ctrl+C hit Fakturama's copy
+    handler in a state it does not support -
+
+        java.lang.NullPointerException: Cannot read the array length because
+        "this.copiedCells" is null
+
+    - which raised a modal error box, which suppressed every tooltip in the
+    application, which made the next run's guarded icons unresolvable. One
+    unverified keystroke, three layers of consequence.
+    """
+    want = _runtime_id(root)
+    if want is None:
+        return False
+    node = auto.GetFocusedControl()
+    for _ in range(depth):
+        if node is None:
+            return False
+        if _runtime_id(node) == want:
+            return True
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return False
+    return False
+
+
+def _claim_grid(dialog, x: int, y: int) -> bool:
+    """Click into the grid and report whether the keyboard followed.
+
+    An empty grid has nothing at that coordinate to select, so the click lands
+    on bare canvas and focus never enters the dialog. That is the whole signal:
+    no row took focus means there is no row.
+
+    It matters because the alternative is silent corruption. Ctrl+A and Ctrl+C
+    go wherever focus *is*, so sending them after a missed click aimed them at
+    the Order's own Items grid, where Fakturama's copy handler died -
+
+        java.lang.NullPointerException: Cannot read the array length because
+        "this.copiedCells" is null
+
+    - raising a modal error box, which suppressed every tooltip in the
+    application, which left the next run's guarded icons unresolvable. One
+    unverified click, three layers of consequence.
+
+    One retry first, because activation does genuinely lose races with SWT
+    redraws and a single miss is not proof of an empty list.
+    """
+    for attempt in (1, 2):
+        auto.Click(x, y)
+        time.sleep(config.SETTLE * 2)
+        if focus_is_inside(dialog):
+            return True
+        log.debug("grid focus did not land (attempt %d); re-activating", attempt)
+        try:
+            dialog.SetActive()
+        except Exception:
+            pass
+        time.sleep(config.SETTLE)
+    return False
+
+
 def grid_pane(dialog):
     """The NatTable body inside a chooser dialog."""
     panes = [p for p in find_all(dialog, lambda c: c.ControlTypeName == "PaneControl", 16)
@@ -222,25 +325,104 @@ def grid_rows(dialog) -> list[list[str]]:
     (An earlier reading of this project concluded the grid was unreadable.
     That measurement was taken against an empty list: nothing copied because
     there was nothing in it.)
+
+    An empty result is a normal answer here, not a failure: it is how a search
+    that matched nothing reports itself, and the caller's next move is to
+    create the record rather than select one.
     """
+    return grid_read(dialog).rows
+
+
+def item_rows(editor) -> GridRead:
+    """Every row of the order's Items grid.
+
+    Its own function because the grid is editable and so selects by *cell*:
+    the data-cell click that reads the chooser returns a single value here.
+    Clicking the row header first makes the selection row-shaped, and only
+    then does Ctrl+A cover the table.
+    """
+    return grid_read(editor, dx=config.GRID_ROW_HEADER_DX, select_all=True)
+
+
+@dataclass(frozen=True)
+class GridRead:
+    """Rows, and how confident we are that there were no more.
+
+    The distinction is not pedantry. An empty *filter result* means "create
+    it"; an empty *read* means "we could not see". Collapsing the two let a
+    VATs list that failed to take focus report as having no rates at all, one
+    step away from creating a duplicate of a rate that was sitting right
+    there. Callers that are searching may treat both as absence; callers
+    reading a whole list must not.
+    """
+
+    rows: list[list[str]]
+    how: str          # 'read' | 'no-pane' | 'no-focus'
+
+    @property
+    def trustworthy(self) -> bool:
+        return self.how == "read"
+
+
+def grid_read(dialog, *, dx: int = None, select_all: bool = True) -> GridRead:
+    """Read a grid, reporting whether the read itself can be trusted.
+
+    `dx` is how far into the grid to click: a data cell by default, or the row
+    header for a cell-selecting grid - see config.GRID_ROW_HEADER_DX.
+    """
+    dx = config.GRID_DATA_DX if dx is None else dx
     try:
         pane = grid_pane(dialog)
     except UIError:
         # When a filter matches nothing the grid body collapses, and there is
         # no pane left to click. That is an empty result, not a failure.
-        return []
+        return GridRead([], "no-pane")
     r = pane.BoundingRectangle
     auto.SetClipboardText("")
+    # An inline cell editor left open from an earlier click swallows the
+    # keystrokes below. Escape cancels it without committing anything.
+    auto.SendKeys("{Esc}", waitTime=0.1)
     # One click only. Reading and then selecting used to click the same row
     # twice in quick succession, which the chooser took as a double-click -
     # accepting the row and adding the wrong product to the order.
-    auto.Click(r.left + 80, r.top + config.GRID_FIRST_ROW_DY)
-    time.sleep(config.SETTLE * 2)
-    auto.SendKeys("{Ctrl}a", waitTime=0.2)
+    if not _claim_grid(dialog, r.left + dx, r.top + config.GRID_FIRST_ROW_DY):
+        log.info("no row took focus in %r - nothing selectable there", dialog.Name)
+        return GridRead([], "no-focus")
+    if select_all:
+        auto.SendKeys("{Ctrl}a", waitTime=0.2)
+    text = _copy_selection(dialog)
+    return GridRead([line.split("\t") for line in text.splitlines() if line.strip()], "read")
+
+
+def _copy_selection(dialog) -> str:
+    """Ctrl+C the grid, and clear the error box if there was nothing to copy.
+
+    Copying an empty NatTable is not a no-op - it throws, every time:
+
+        java.lang.NullPointerException: Cannot read the array length because
+        "this.copiedCells" is null
+
+    and Eclipse queues an 'Internal Error' box for it. The box then suppresses
+    every tooltip in the application, so the *next* item's icon cannot be
+    confirmed and the run stops on a step that was never at fault. That is the
+    loop this closes: a search matching nothing is an ordinary answer, so its
+    error box is cleaned up here and the empty result returned plainly.
+    """
     auto.SendKeys("{Ctrl}c", waitTime=0.3)
     time.sleep(config.SETTLE)
     text = auto.GetClipboardText() or ""
-    return [line.split("\t") for line in text.splitlines() if line.strip()]
+    if not text.strip():
+        for report in dismiss_error_dialogs(dialog_owner(dialog)):
+            log.debug("cleared after copying an empty grid: %s", report)
+    return text
+
+
+def dialog_owner(ctrl):
+    """The Fakturama shell, whether `ctrl` is the shell, a view or a dialog."""
+    try:
+        return window()
+    except UIError:
+        return ctrl
 
 
 def grid_select_row(dialog, index: int) -> list[str]:
@@ -249,16 +431,21 @@ def grid_select_row(dialog, index: int) -> list[str]:
     Selecting still needs a coordinate - the rows are painted, not published -
     but the click is immediately proved by copying the selected row back, so a
     mis-aimed click is caught rather than committed.
+
+    Unlike grid_rows, a missed click here does raise. The caller has already
+    read this row and is asking for it by index, so "nothing took focus" is a
+    contradiction, not an empty list.
     """
     pane = grid_pane(dialog)
     r = pane.BoundingRectangle
     y = r.top + config.GRID_FIRST_ROW_DY + index * config.GRID_ROW_HEIGHT
     auto.SetClipboardText("")
-    auto.Click(r.left + 80, y)
-    time.sleep(config.SETTLE)
-    auto.SendKeys("{Ctrl}c", waitTime=0.3)
-    time.sleep(config.SETTLE)
-    text = auto.GetClipboardText() or ""
+    if not _claim_grid(dialog, r.left + 80, y):
+        raise UIError(
+            f"row {index} of {dialog.Name!r} did not take focus; refusing to send "
+            "Ctrl+C, which would copy whatever else is focused"
+        )
+    text = _copy_selection(dialog)
     return text.splitlines()[0].split("\t") if text.strip() else []
 
 
@@ -282,8 +469,63 @@ def _visible_tooltip(root=None) -> str | None:
     return None
 
 
+def owned_dialogs(win) -> list:
+    """Fakturama's own Win32 dialogs, wherever Windows parented them.
+
+    Both places have to be searched. Eclipse's 'Internal Error' box is a
+    sibling of the shell at the desktop root, while the web shop's error box
+    is a descendant of it - and looking in only one of them reported "no
+    popups" with a dialog plainly on screen. Ownership is decided by process
+    id: matching on "not the shell" would sweep in the terminal this
+    automation runs from and every other app on the desktop.
+    """
+    try:
+        pid = win.ProcessId
+    except Exception:
+        return []
+
+    def usable(w) -> bool:
+        try:
+            if w.ClassName != config.DIALOG_CLASS:
+                return False
+            r = w.BoundingRectangle
+            if r.width() <= 0 or r.height() <= 0:
+                return False      # a disposed dialog still lingers in the tree
+            return w.ProcessId == pid
+        except Exception:
+            return False
+
+    out = [w for w in auto.GetRootControl().GetChildren()
+           if w.ControlTypeName == "WindowControl" and usable(w)]
+    seen = {_runtime_id(w) for w in out}
+    for w in find_all(win, lambda c: c.ControlTypeName == "WindowControl", 6):
+        if usable(w) and _runtime_id(w) not in seen:
+            out.append(w)
+    return out
+
+
+def dialog_buttons(dlg) -> set[str]:
+    """The buttons a dialog offers, minus its title bar and any expander."""
+    names = {b.Name for b in find_all(dlg, lambda c: c.ControlTypeName == "ButtonControl", 6)
+             if b.Name}
+    return names - config.TITLE_BAR_BUTTONS - config.EXPANDER_BUTTONS
+
+
+def reports_only(dlg) -> bool:
+    """Does this dialog just tell you something, rather than ask?
+
+    The distinction that matters for closing one unattended. A report offers a
+    single way out - OK - so pressing it changes nothing that was not already
+    true. A question offers alternatives, and picking one decides the fate of
+    real work: 'Save changes?' with Yes/No/Cancel, or the product chooser with
+    OK/Cancel. Those stay open.
+    """
+    content = dialog_buttons(dlg)
+    return bool(content) and content <= config.ACKNOWLEDGE_BUTTONS
+
+
 def blocking_popups(win) -> list[str]:
-    """Modal windows that will suppress tooltips while they are open.
+    """Windows that will suppress tooltips while they are open.
 
     An inactive window does not render tooltips, so any open dialog - a
     chooser left behind, an 'Internal Error' box - silently disables the whole
@@ -291,25 +533,101 @@ def blocking_popups(win) -> list[str]:
     the guarded ones refuse to act at all. Diagnosed the hard way: a stray
     error dialog made the item-delete icon unresolvable, and the positional
     fallback clicked *paste* instead.
+
+    An earlier version asked GetForegroundControl() whether a dialog held the
+    screen. It returns None often enough to matter, and when it did, this
+    reported "no popups" with an 'Internal Error' box plainly visible. Presence
+    is the question, not activation - so presence is what gets measured.
     """
     names = [w.Name for w in find_all(win, lambda c: c.ControlTypeName == "WindowControl", 6)
              if w.Name]
-    # Some dialogs - notably Eclipse's 'Internal Error' box - are siblings of
-    # the shell at the desktop root, not children of it. Searching only inside
-    # the shell reported "no popups" while one held the foreground and
-    # suppressed every tooltip in the application.
-    try:
-        foreground = auto.GetForegroundControl()
-        if foreground is not None:
-            name, cls = foreground.Name or "", foreground.ClassName or ""
-            # Only a real dialog counts. Matching on "not the shell" would
-            # flag the terminal the automation is launched from, and refuse
-            # to do anything at all.
-            if name != (win.Name or "") and (cls == "#32770" or "Error" in name):
-                names.append(name)
-    except Exception:
-        pass
+    names += [w.Name or "(untitled dialog)" for w in owned_dialogs(win)]
     return names
+
+
+def _dialog_message(dlg) -> str:
+    """The text an error box is showing, for the log."""
+    lines = [t.Name for t in find_all(dlg, lambda c: c.ControlTypeName == "TextControl", 6)
+             if t.Name and t.Name.strip()]
+    return " | ".join(lines[:3])
+
+
+def dismiss_error_dialogs(win) -> list[str]:
+    """Close the report-only dialogs in the way, and say what was closed.
+
+    They are not incidental: while one is open every tooltip in the
+    application is suppressed, which disables the resolver's semantic layer,
+    which makes guarded icons refuse to act. Clearing them is a precondition
+    for the run, not tidying up.
+
+    Only boxes that report. Anything offering a choice is left exactly where
+    it is - see reports_only.
+    """
+    closed = []
+    # A loop, not a pass: Eclipse queues these and shows one at a time, so
+    # closing the visible box brings up the next - each cascaded down and right
+    # from the last. A single sweep clears one and reports success while the
+    # tooltip layer is still suppressed by its successor.
+    for _ in range(config.ERROR_DIALOG_SWEEPS):
+        pending = [d for d in owned_dialogs(win) if reports_only(d)]
+        if not pending:
+            break
+        for dlg in pending:
+            title = (dlg.Name or "").strip() or "(untitled dialog)"
+            message = _dialog_message(dlg)
+            if not _press_dismiss(dlg, title):
+                return closed          # stuck; say so rather than spin
+            closed.append(f"{title}: {message}" if message else title)
+            log.warning("dismissed %r - %s", title, message)
+
+    for dlg in owned_dialogs(win):
+        log.info("leaving the %r dialog alone - it asks something (%s)",
+                 dlg.Name, sorted(dialog_buttons(dlg)))
+    return closed
+
+
+def _press_dismiss(dlg, title: str) -> bool:
+    """Press the dialog's acknowledge button and confirm it went away.
+
+    Three routes, because a Win32 dialog button is not an SWT one: Invoke is
+    the clean path, a real click is what actually works when the dialog does
+    not own the foreground, and Escape is the last resort.
+    """
+    buttons = {b.Name: b for b in
+               find_all(dlg, lambda c: c.ControlTypeName == "ButtonControl", 6) if b.Name}
+    button = next((buttons[n] for n in config.ERROR_DISMISS_BUTTONS if n in buttons), None)
+    if button is None:
+        log.warning("%r offers no acknowledge button (%s)", title, sorted(buttons))
+        return False
+
+    r = button.BoundingRectangle
+    for route in ("invoke", "click", "escape"):
+        try:
+            if route == "invoke":
+                button.GetInvokePattern().Invoke()
+            elif route == "click":
+                dlg.SetActive()
+                time.sleep(0.2)
+                auto.Click((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+            else:
+                dlg.SetActive()
+                auto.SendKeys("{Esc}", waitTime=0.1)
+        except Exception as exc:
+            log.debug("%s route failed on %r: %s", route, title, exc)
+            continue
+        time.sleep(config.SETTLE)
+        if not _still_open(dlg):
+            return True
+    log.warning("could not close the %r dialog; tooltips will stay suppressed", title)
+    return False
+
+
+def _still_open(dlg) -> bool:
+    try:
+        r = dlg.BoundingRectangle
+        return r.width() > 0 and r.height() > 0
+    except Exception:
+        return False
 
 
 def tooltip_of(ctrl, timeout: float = None) -> str | None:

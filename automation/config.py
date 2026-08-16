@@ -93,6 +93,27 @@ ADDR_COL = {"number": 0, "first_name": 1, "last_name": 2, "company": 3, "zip": 4
 #   product: 12 juice null null 12.0 <VAT blob>
 PRODUCT_COL = {"sku": 0, "name": 1, "description": 2, "stock": 3, "price": 4}
 
+# The order's own Items grid, measured from live Ctrl+C output:
+#   1.00  CHR-ERG-01  null  Ergonomic Desk Chair  ''  <VAT blob>  USD 250  0.0  USD 250
+ITEM_COL = {"quantity": 0, "sku": 1, "name": 3, "vat": 5,
+            "unit_price": 6, "discount": 7, "total": 8}
+
+# Where to click to select something in a NatTable. A data cell is enough in
+# the read-only chooser and list views - they select whole rows. The order's
+# Items grid is editable and therefore cell-selecting: a data-cell click plus
+# Ctrl+A yields *one cell*, and only a click on the row header to its left
+# turns the selection into rows that Ctrl+A can extend across the table.
+GRID_DATA_DX = 80
+GRID_ROW_HEADER_DX = 12
+
+# Inside the Items grid, how far in the first data column starts. Used only to
+# put the active cell on a known column - every column after it is reached with
+# arrow keys, and the cell that opens is checked against the value the row was
+# copied with before anything is typed into it. So this is a starting point,
+# not an identity claim: if the layout shifts, the check fails and the write is
+# refused rather than landing in the wrong column.
+GRID_FIRST_COLUMN_DX = 60
+
 # --- product chooser (spec 3.2-3.3) -----------------------------------------
 
 PRODUCT_DIALOG_TITLE = "Select a product"
@@ -103,3 +124,38 @@ TOOLTIP_ATTEMPTS = 3
 
 VAT_EDITOR_TITLE = 'New TAX Rate'
 VAT_CODE_STANDARD = 'S (Standard rate)'
+
+# --- product creation (spec 3.7) ---------------------------------------------
+
+PRODUCT_EDITOR_TITLE = 'New product'
+
+# Which price the editor asks for is a workspace preference, and the label is
+# the only place it is stated. Measured here as gross, but the form reads it
+# rather than assuming, because entering a net price into a gross field books
+# the wrong amount and nothing downstream would notice.
+PRICE_LABEL_GROSS = 'Price (gross)'
+PRICE_LABEL_NET = 'Price (net)'
+
+# --- error dialogs -----------------------------------------------------------
+
+# Fakturama's error boxes are plain Win32 dialogs parented to the desktop, not
+# to the shell, so they have to be looked for there.
+DIALOG_CLASS = "#32770"
+
+# Which of those are safe to dismiss unattended, decided by what the dialog
+# offers rather than by its title. A box that only *reports* gives you one way
+# out; a box that *asks* gives you a choice, and choosing is not the
+# automation's call. Titles were tried first and are too weak: 'Error
+# importing data from web shop' is a plain OK box, while 'Confirm' might not
+# be - the buttons say which is which, the wording does not.
+TITLE_BAR_BUTTONS = frozenset({"Close", "Minimize", "Maximize", "Restore", "System"})
+EXPANDER_BUTTONS = frozenset({"Details >>", "Details <<"})
+ACKNOWLEDGE_BUTTONS = frozenset({"OK"})
+
+# The buttons such a box offers, in the order we would rather press them.
+ERROR_DISMISS_BUTTONS = ("OK", "Close")
+
+# How many times to re-check after clearing one. Eclipse queues error boxes and
+# reveals the next as the current one closes, so a single pass is not enough -
+# but an unbounded loop against a dialog that keeps reappearing is worse.
+ERROR_DIALOG_SWEEPS = 8

@@ -53,13 +53,15 @@ class Scope:
     per rectangle for the life of the scope.
     """
 
-    def __init__(self, win, editor=None, debtor=None, dialog=None, payment=None, vat=None):
+    def __init__(self, win, editor=None, debtor=None, dialog=None, payment=None,
+                 vat=None, product=None):
         self.win = win
         self.editor = editor
         self.debtor = debtor
         self.dialog = dialog
         self.payment = payment
         self.vat = vat
+        self.product = product
         self._tips: dict[tuple, str | None] = {}
 
     def tooltip(self, ctrl) -> str | None:
@@ -78,6 +80,7 @@ class Scope:
             Screen.ADDRESS_DIALOG: self.dialog,
             Screen.PAYMENT_EDITOR: self.payment,
             Screen.VAT_EDITOR: self.vat,
+            Screen.PRODUCT_EDITOR: self.product,
         }[t.screen]
         if root is None:
             raise UIError(f"{t.key}: needs the {t.screen.value}, which is not open")
@@ -95,6 +98,11 @@ def _layer1(root, t: Target):
     if not hits:
         return None, f"no {t.control_type} named {t.name!r}"
     if len(hits) > 1:
+        if t.any_of_several:
+            # Declared in the catalog as "these are the same command". Said out
+            # loud in the detail so the log never implies a unique match.
+            return hits[0], (f"1 of {len(hits)} {t.control_type}s named {t.name!r}, "
+                             "catalogued as interchangeable")
         # Do not silently take [0]; fall through and let a positional layer
         # disambiguate. Picking arbitrarily is how a value lands in the
         # wrong field while every log line still says "found".

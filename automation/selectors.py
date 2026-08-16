@@ -52,6 +52,10 @@ class Input(str, Enum):
     TEXT = "text"                       # SWT Text: select-all, type, Tab
     SEGMENTED_DATE = "segmented_date"    # SWT CDateTime: per-segment digits
     COMBO = "combo"                     # dropdown: click the ListItem by name
+    # A currency field renders what you typed: '297.50' comes back as
+    # '$297.50'. Comparing the strings would fail a write that was perfectly
+    # correct, so the read-back is compared as a number.
+    MONEY = "money"
 
 
 class Screen(str, Enum):
@@ -61,6 +65,7 @@ class Screen(str, Enum):
     ADDRESS_DIALOG = "address_dialog"  # the modal 'Select the address' chooser
     PAYMENT_EDITOR = "payment_editor"  # the 'New Term of Payment' editor
     VAT_EDITOR = "vat_editor"          # the 'New TAX Rate' editor
+    PRODUCT_EDITOR = "product_editor"  # the 'New product' editor
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,20 @@ class Target:
     # A live filter box is not a form field: it has nothing to commit, and
     # tabbing out of one that matched nothing clears it.
     commit_with_tab: bool = True
+    # Deliver the value as one paste rather than a stream of keystrokes.
+    # Reserved for filter boxes that re-query on every character: the product
+    # chooser rebuilds its table per keystroke and, measured repeatedly,
+    # disposes itself on the second character - 'C' lands, 'H' closes the
+    # dialog. A single Ctrl+V runs that filter once and survives. Never set
+    # this on a field that feeds a calculation: those need real keystrokes so
+    # SWT's modify listeners fire the way a human's typing makes them fire.
+    paste: bool = False
+    # Several controls share this Name *and* they are the same command, so any
+    # of them will do. Declared per row, never assumed: the default refusal to
+    # choose between same-named controls is what stops a value landing in the
+    # wrong field. Only ever correct for buttons - two Edits with one Name are
+    # two different fields, and picking either is a coin toss.
+    any_of_several: bool = False
     note: str = ""
 
     @property
@@ -210,6 +229,27 @@ CATALOG: tuple[Target, ...] = (
         name="Total Gross",
         read_only=True,
         note="Exists only while price mode is Gross.",
+    ),
+    # The document totals. Independent of anything this automation computes,
+    # which is what makes them worth reading: they are Fakturama's own answer
+    # to the same sum the extraction reconciled against the image, so agreeing
+    # with them is real corroboration rather than a restated assumption.
+    Target(
+        key="order.vat_amount",
+        screen=Screen.ORDER_EDITOR,
+        control_type="EditControl",
+        name="VAT",
+        read_only=True,
+        note="The document's VAT total. Distinguished from the 'VAT' combo "
+             "(order.vat_mode) by control type, which layer 1 already keys on.",
+    ),
+    Target(
+        key="order.total",
+        screen=Screen.ORDER_EDITOR,
+        control_type="EditControl",
+        name="Total",
+        read_only=True,
+        note="The document's gross total - net plus VAT plus shipping.",
     ),
     # --- unlabeled icons: no Name at all, resolved purely by tooltip ---------
     Target(
@@ -598,7 +638,9 @@ CATALOG: tuple[Target, ...] = (
         anchor="Search:",
         input=Input.TEXT,
         commit_with_tab=False,
-        note="Spec 3.3. Same chooser shell as the address selector.",
+        paste=True,
+        note="Spec 3.3. Same chooser shell as the address selector. Pasted, "
+             "not typed: per-keystroke filtering closes the dialog mid-SKU.",
     ),
     Target(
         key="product_dialog.ok",
@@ -667,6 +709,74 @@ CATALOG: tuple[Target, ...] = (
         control_type="ButtonControl",
         name="Set as standard",
         note="Spec 3.6 leaves the displayed Standard VAT unchanged; never clicked.",
+    ),
+    # --- 3.7: creating a product the chooser did not have --------------------
+    Target(
+        key="product.list_new",
+        screen=Screen.MAIN,
+        control_type="ButtonControl",
+        name="Create a new product",
+        any_of_several=True,
+        note="Two of these exist - the main toolbar's and the Products view's - "
+             "and they are the same command. Preferred over the left panel's "
+             "'New product' link, which was measured silently doing nothing "
+             "once a session had opened and closed a product editor.",
+    ),
+    Target(
+        key="product.item_number",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="EditControl",
+        name="Item Number",
+        input=Input.TEXT,
+        note="The SKU. This is what the chooser's search matches on.",
+    ),
+    Target(
+        key="product.name",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="EditControl",
+        name="Name",
+        input=Input.TEXT,
+        note="The line text that ends up on the document.",
+    ),
+    Target(
+        key="product.description",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="EditControl",
+        name="Description",
+        input=Input.TEXT,
+        multiline=True,
+        note="Free text under the name; left empty unless the source has more "
+             "than the line description already written into Name.",
+    ),
+    Target(
+        key="product.vat",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="ComboBoxControl",
+        name="VAT",
+        input=Input.COMBO,
+        note="Lists the tax rates by Name, so 3.5 has to resolve the rate first.",
+    ),
+    # The price field carries no Name and no tooltip, and its label states the
+    # mode: 'Price (gross)' or 'Price (net)', a workspace preference. Two rows
+    # rather than one, so the form finds out which mode it is in by which key
+    # resolves - and converts the extracted net price only when it must.
+    Target(
+        key="product.price_gross",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="EditControl",
+        anchor="Price (gross)",
+        anchor_side="right",
+        input=Input.MONEY,
+        note="Present when the workspace prices products gross.",
+    ),
+    Target(
+        key="product.price_net",
+        screen=Screen.PRODUCT_EDITOR,
+        control_type="EditControl",
+        anchor="Price (net)",
+        anchor_side="right",
+        input=Input.MONEY,
+        note="Present when the workspace prices products net.",
     ),
 )
 
